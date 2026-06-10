@@ -1,0 +1,37 @@
+WORKPILOT — LOKAAL OP JE EIGEN PC
+==================================
+
+Dit pakket bevat de complete portal + agent. Eenmaal starten en alles draait
+lokaal op je PC, inclusief echte uitvoering (AD / Exchange / Microsoft Graph).
+
+STAP 1 — Node.js installeren (eenmalig)
+   Download en installeer Node.js 18 of hoger: https://nodejs.org
+   (kies "LTS"). Klaar.
+
+STAP 2 — Starten
+   Dubbelklik op:  start.bat
+   - De eerste keer installeert hij eenmalig de onderdelen (even wachten).
+   - Daarna opent je browser automatisch op http://localhost:8787
+   - Inloggen met je lokale account (bv. admin@sorrento.cloud).
+
+STAP 3 — De portal aan zijn eigen agent koppelen
+   In de portal: Settings -> Integrations -> WorkPilot Migration Agent
+     - URL:      http://localhost:8787
+     - API key:  workpilot-local-key   (of wat je in .env zette)
+   Klik "Test agent connection". Je ziet of PowerShell en Graph beschikbaar zijn.
+
+STAP 4 (optioneel) — Cloud-acties via Microsoft Graph
+   Voor het echt aanmaken van cloud-accounts/uitnodigingen:
+   open .env en vul in: TENANT_ID, CLIENT_ID, CLIENT_SECRET
+   (Entra app-registratie met application permissions + admin consent:
+    User.ReadWrite.All, User.Invite.All, Group.ReadWrite.All)
+   Daarna start.bat opnieuw starten.
+
+STOPPEN
+   Sluit gewoon het zwarte venster.
+
+LET OP
+   - On-prem AD/Exchange werkt alleen als je PC daar toegang toe heeft
+     (domein-lid, juiste PowerShell-modules, gedelegeerd account).
+   - Alleen jij bereikt http://localhost:8787 op deze PC. Wil je het delen
+     of op een server zetten, zie DEPLOYMENT.md.
