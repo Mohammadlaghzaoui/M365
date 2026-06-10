@@ -1,0 +1,290 @@
+import { PSTask } from '../types';
+
+export const psTasks: PSTask[] = [
+  // ---------- Entra ID / Graph ----------
+  {
+    id: 'ps-entra-getuser', service: 'Entra ID / Microsoft Graph', name: 'Get user',
+    template: "Connect-MgGraph -Scopes 'User.Read.All'\nGet-MgUser -UserId {upn} -Property DisplayName,UserPrincipalName,AccountEnabled,Department,JobTitle,OnPremisesSyncEnabled | Format-List",
+    explanation: 'Retrieves the core properties of a user including account state and hybrid sync status.',
+    module: 'Microsoft.Graph (Connect-MgGraph)', requiredRole: 'Global Reader / User Administrator', warning: 'Read-only.',
+    params: [{ key: 'upn', label: 'User UPN', placeholder: 'user@contoso.com' }],
+  },
+  {
+    id: 'ps-entra-license', service: 'Entra ID / Microsoft Graph', name: 'Check user license',
+    template: 'Get-MgUserLicenseDetail -UserId {upn} | Select-Object SkuPartNumber -ExpandProperty ServicePlans | Select-Object SkuPartNumber,ServicePlanName,ProvisioningStatus',
+    explanation: 'Lists assigned licenses and the provisioning status of each service plan.',
+    module: 'Microsoft.Graph', requiredRole: 'Global Reader', warning: 'Read-only.',
+    params: [{ key: 'upn', label: 'User UPN', placeholder: 'user@contoso.com' }],
+  },
+  {
+    id: 'ps-entra-groups', service: 'Entra ID / Microsoft Graph', name: 'Check user groups',
+    template: "Get-MgUserMemberOf -UserId {upn} -All | ForEach-Object { $_.AdditionalProperties['displayName'] } | Sort-Object",
+    explanation: 'Lists every group and directory role the user is a member of.',
+    module: 'Microsoft.Graph', requiredRole: 'Global Reader', warning: 'Read-only.',
+    params: [{ key: 'upn', label: 'User UPN', placeholder: 'user@contoso.com' }],
+  },
+  {
+    id: 'ps-entra-disable', service: 'Entra ID / Microsoft Graph', name: 'Disable user + revoke sessions',
+    template: 'Update-MgUser -UserId {upn} -AccountEnabled:$false\nRevoke-MgUserSignInSession -UserId {upn}',
+    explanation: 'Blocks sign-in and revokes refresh tokens so active sessions die.',
+    module: 'Microsoft.Graph', requiredRole: 'User Administrator', warning: 'DESTRUCTIVE for the user session — approval required. Hybrid users must be disabled in on-prem AD.',
+    params: [{ key: 'upn', label: 'User UPN', placeholder: 'user@contoso.com' }],
+  },
+  {
+    id: 'ps-entra-roles', service: 'Entra ID / Microsoft Graph', name: 'Check admin role members',
+    template: "$role = Get-MgDirectoryRole -Filter \"displayName eq '{role}'\"\nGet-MgDirectoryRoleMember -DirectoryRoleId $role.Id | ForEach-Object { $_.AdditionalProperties['userPrincipalName'] }",
+    explanation: 'Lists the members of a directory role (e.g. Global Administrator).',
+    module: 'Microsoft.Graph', requiredRole: 'Global Reader', warning: 'Read-only. Role must have been activated at least once to appear.',
+    params: [{ key: 'role', label: 'Role display name', placeholder: 'Global Administrator' }],
+  },
+  // ---------- Exchange Online ----------
+  {
+    id: 'ps-exo-connect', service: 'Exchange Online', name: 'Connect-ExchangeOnline',
+    template: 'Connect-ExchangeOnline -UserPrincipalName {admin}',
+    explanation: 'Connects to Exchange Online PowerShell with modern authentication.',
+    module: 'ExchangeOnlineManagement', requiredRole: 'Any Exchange role', warning: 'Use your admin account.',
+    params: [{ key: 'admin', label: 'Admin UPN', placeholder: 'admin@contoso.com' }],
+  },
+  {
+    id: 'ps-exo-getmailbox', service: 'Exchange Online', name: 'Get mailbox',
+    template: 'Get-Mailbox {upn} | Format-List DisplayName,PrimarySmtpAddress,RecipientTypeDetails,ExchangeGuid,ArchiveStatus,ForwardingSmtpAddress,LitigationHoldEnabled',
+    explanation: 'Core mailbox properties: type, GUID (migrations!), archive, forwarding, holds.',
+    module: 'ExchangeOnlineManagement', requiredRole: 'View-Only Recipients+', warning: 'Read-only.',
+    params: [{ key: 'upn', label: 'Mailbox', placeholder: 'user@contoso.com' }],
+  },
+  {
+    id: 'ps-exo-perms', service: 'Exchange Online', name: 'Get mailbox permissions',
+    template: "Get-MailboxPermission {upn} | Where-Object { $_.User -notlike 'NT AUTHORITY*' } | Select-Object User,AccessRights\nGet-RecipientPermission {upn} | Select-Object Trustee,AccessRights\nGet-Mailbox {upn} | Select-Object GrantSendOnBehalfTo",
+    explanation: 'Full permission picture: Full Access, Send As and Send on Behalf in one go.',
+    module: 'ExchangeOnlineManagement', requiredRole: 'View-Only Recipients+', warning: 'Read-only.',
+    params: [{ key: 'upn', label: 'Mailbox', placeholder: 'shared@contoso.com' }],
+  },
+  {
+    id: 'ps-exo-fullaccess', service: 'Exchange Online', name: 'Add Full Access',
+    template: 'Add-MailboxPermission {mailbox} -User {user} -AccessRights FullAccess -AutoMapping:${automap}',
+    explanation: 'Grants Full Access; automapping makes the mailbox auto-appear in Outlook.',
+    module: 'ExchangeOnlineManagement', requiredRole: 'Exchange Recipient Administrator', warning: 'Privacy-sensitive on personal mailboxes — documented approval required.',
+    params: [
+      { key: 'mailbox', label: 'Target mailbox', placeholder: 'shared@contoso.com' },
+      { key: 'user', label: 'User to grant', placeholder: 'user@contoso.com' },
+      { key: 'automap', label: 'AutoMapping ($true/$false)', placeholder: 'true' },
+    ],
+  },
+  {
+    id: 'ps-exo-sendas', service: 'Exchange Online', name: 'Add Send As',
+    template: 'Add-RecipientPermission {mailbox} -Trustee {user} -AccessRights SendAs -Confirm:$false',
+    explanation: 'Lets the user send mail AS the target address (full impersonation).',
+    module: 'ExchangeOnlineManagement', requiredRole: 'Exchange Recipient Administrator', warning: 'Impersonation permission — approval required. Caching up to 60 min.',
+    params: [
+      { key: 'mailbox', label: 'Target mailbox', placeholder: 'shared@contoso.com' },
+      { key: 'user', label: 'Trustee user', placeholder: 'user@contoso.com' },
+    ],
+  },
+  {
+    id: 'ps-exo-forwarding', service: 'Exchange Online', name: 'Check forwarding',
+    template: 'Get-Mailbox {upn} | Select-Object ForwardingAddress,ForwardingSmtpAddress,DeliverToMailboxAndForward\nGet-InboxRule -Mailbox {upn} | Where-Object { $_.ForwardTo -or $_.RedirectTo } | Select-Object Name,ForwardTo,RedirectTo',
+    explanation: 'Checks both admin-level forwarding and rule-based forwarding (compromise check!).',
+    module: 'ExchangeOnlineManagement', requiredRole: 'Exchange Administrator', warning: 'Read-only. Unknown external forwarding = treat as incident.',
+    params: [{ key: 'upn', label: 'Mailbox', placeholder: 'user@contoso.com' }],
+  },
+  {
+    id: 'ps-exo-inboxrules', service: 'Exchange Online', name: 'Check inbox rules',
+    template: 'Get-InboxRule -Mailbox {upn} | Select-Object Name,Enabled,Priority,ForwardTo,RedirectTo,DeleteMessage,MoveToFolder | Format-List',
+    explanation: 'Lists all inbox rules including hidden forwarding/delete rules.',
+    module: 'ExchangeOnlineManagement', requiredRole: 'Exchange Administrator', warning: 'Read-only. Disable suspect rules, do not delete (evidence).',
+    params: [{ key: 'upn', label: 'Mailbox', placeholder: 'user@contoso.com' }],
+  },
+  {
+    id: 'ps-exo-trace', service: 'Exchange Online', name: 'Message trace',
+    template: "Get-MessageTrace -SenderAddress {sender} -RecipientAddress {recipient} -StartDate (Get-Date).AddDays(-{days}) -EndDate (Get-Date) | Select-Object Received,SenderAddress,RecipientAddress,Subject,Status | Format-Table -AutoSize",
+    explanation: 'Follows messages through the tenant for the given sender/recipient pair (max ~10 days real-time).',
+    module: 'ExchangeOnlineManagement', requiredRole: 'View-Only Organization Management+', warning: 'Read-only metadata.',
+    params: [
+      { key: 'sender', label: 'Sender', placeholder: 'sender@ext.com' },
+      { key: 'recipient', label: 'Recipient', placeholder: 'user@contoso.com' },
+      { key: 'days', label: 'Days back (max 10)', placeholder: '2' },
+    ],
+  },
+  {
+    id: 'ps-exo-room-get', service: 'Exchange Online', name: 'Get room mailbox settings',
+    template: 'Get-CalendarProcessing {room} | Format-List AutomateProcessing,BookingWindowInDays,MaximumDurationInMinutes,AllowConflicts,AllowRecurringMeetings,ConflictPercentageAllowed,MaximumConflictInstances,AllBookInPolicy,BookInPolicy,ResourceDelegates',
+    explanation: 'All booking-relevant settings of a room mailbox in one view.',
+    module: 'ExchangeOnlineManagement', requiredRole: 'View-Only Recipients+', warning: 'Read-only.',
+    params: [{ key: 'room', label: 'Room mailbox', placeholder: 'room.amsterdam@contoso.com' }],
+  },
+  {
+    id: 'ps-exo-room-set', service: 'Exchange Online', name: 'Set room mailbox AutoAccept',
+    template: 'Set-CalendarProcessing {room} -AutomateProcessing AutoAccept -AllowRecurringMeetings $true -BookingWindowInDays {days}',
+    explanation: 'Makes the room auto-accept bookings with the given booking window.',
+    module: 'ExchangeOnlineManagement', requiredRole: 'Exchange Recipient Administrator', warning: 'Coordinate with the facility owner; affects all bookings.',
+    params: [
+      { key: 'room', label: 'Room mailbox', placeholder: 'room.amsterdam@contoso.com' },
+      { key: 'days', label: 'Booking window (days)', placeholder: '180' },
+    ],
+  },
+  // ---------- Cross-tenant migration ----------
+  {
+    id: 'ps-ct-endpoint', service: 'Cross-Tenant Migration', name: 'New-MigrationEndpoint (cross-tenant)',
+    template: '$AppSecret = Read-Host "App secret" -AsSecureString\nNew-MigrationEndpoint -RemoteServer outlook.office.com -RemoteTenant "{sourceDomain}" -Credentials (New-Object System.Management.Automation.PSCredential("{appId}", $AppSecret)) -ExchangeRemoteMove:$true -Name "{name}" -ApplicationId "{appId}"',
+    explanation: 'Creates the cross-tenant migration endpoint in the TARGET tenant using the migration app.',
+    module: 'ExchangeOnlineManagement (target tenant)', requiredRole: 'Exchange Administrator (target)', warning: 'Run in the TARGET tenant. App consent in source must be completed first.',
+    params: [
+      { key: 'sourceDomain', label: 'Source onmicrosoft domain', placeholder: 'source.onmicrosoft.com' },
+      { key: 'appId', label: 'Application (client) ID', placeholder: '00000000-0000-...' },
+      { key: 'name', label: 'Endpoint name', placeholder: 'CrossTenantEndpoint' },
+    ],
+  },
+  {
+    id: 'ps-ct-orgrel-new', service: 'Cross-Tenant Migration', name: 'New-OrganizationRelationship',
+    template: 'New-OrganizationRelationship "{name}" -Enabled:$true -MailboxMoveEnabled:$true -MailboxMoveCapability {capability} -DomainNames "{tenantId}"',
+    explanation: 'Creates the org relationship. Target side: capability Inbound. Source side: RemoteOutbound (+ OAuthApplicationId + scopes via Set).',
+    module: 'ExchangeOnlineManagement', requiredRole: 'Exchange Administrator / Organization Management', warning: 'Tenant-level trust object — change management applies.',
+    params: [
+      { key: 'name', label: 'Relationship name', placeholder: 'CrossTenantOrgRel' },
+      { key: 'capability', label: 'Capability (Inbound/RemoteOutbound)', placeholder: 'Inbound' },
+      { key: 'tenantId', label: 'Other tenant ID (GUID)', placeholder: 'tenant-guid' },
+    ],
+  },
+  {
+    id: 'ps-ct-orgrel-set', service: 'Cross-Tenant Migration', name: 'Set-OrganizationRelationship (source scope)',
+    template: 'Set-OrganizationRelationship "{name}" -Enabled:$true -MailboxMoveEnabled:$true -MailboxMoveCapability RemoteOutbound -OAuthApplicationId "{appId}" -MailboxMovePublishedScopes "{scopeGroup}"',
+    explanation: 'Source-tenant side: binds the migration app and publishes the scope group.',
+    module: 'ExchangeOnlineManagement (source tenant)', requiredRole: 'Organization Management (source)', warning: 'Wrong scope = blocked or over-broad migrations.',
+    params: [
+      { key: 'name', label: 'Relationship name', placeholder: 'CrossTenantOrgRel' },
+      { key: 'appId', label: 'Application (client) ID', placeholder: '00000000-...' },
+      { key: 'scopeGroup', label: 'Scope group name', placeholder: 'CrossTenantMigrationScope' },
+    ],
+  },
+  {
+    id: 'ps-ct-test', service: 'Cross-Tenant Migration', name: 'Test-MigrationServerAvailability',
+    template: 'Test-MigrationServerAvailability -Endpoint "{endpoint}" -TestMailbox "{mailbox}"',
+    explanation: 'Validates the whole chain (app, consent, org relationship, scope) for one test mailbox BEFORE creating batches.',
+    module: 'ExchangeOnlineManagement (target tenant)', requiredRole: 'Exchange Administrator (target)', warning: 'Run for at least one mailbox per batch before migrating.',
+    params: [
+      { key: 'endpoint', label: 'Endpoint name', placeholder: 'CrossTenantEndpoint' },
+      { key: 'mailbox', label: 'Target MailUser identity', placeholder: 'user@target.onmicrosoft.com' },
+    ],
+  },
+  {
+    id: 'ps-ct-batch', service: 'Cross-Tenant Migration', name: 'New-MigrationBatch (cross-tenant)',
+    template: 'New-MigrationBatch -Name "{batch}" -SourceEndpoint "{endpoint}" -CSVData ([System.IO.File]::ReadAllBytes("{csvPath}")) -TargetDeliveryDomain "{tdd}" -AutoStart',
+    explanation: 'Creates and starts the cross-tenant migration batch from a CSV (header: EmailAddress).',
+    module: 'ExchangeOnlineManagement (target tenant)', requiredRole: 'Exchange Administrator (target)', warning: 'Completion converts/deletes source mailboxes — no automatic rollback. Pilot first!',
+    params: [
+      { key: 'batch', label: 'Batch name', placeholder: 'CT-Batch-01' },
+      { key: 'endpoint', label: 'Endpoint name', placeholder: 'CrossTenantEndpoint' },
+      { key: 'csvPath', label: 'CSV path', placeholder: 'C:\\Migrations\\batch01.csv' },
+      { key: 'tdd', label: 'Target delivery domain', placeholder: 'target.onmicrosoft.com' },
+    ],
+  },
+  {
+    id: 'ps-ct-getmiguser', service: 'Cross-Tenant Migration', name: 'Get-MigrationUser (status)',
+    template: 'Get-MigrationUser -BatchId "{batch}" | Get-MigrationUserStatistics | Select-Object Identity,Status,SyncedItemCount,Error | Format-Table -AutoSize',
+    explanation: 'Per-user migration status and errors for a batch.',
+    module: 'ExchangeOnlineManagement', requiredRole: 'Exchange Administrator', warning: 'Read-only.',
+    params: [{ key: 'batch', label: 'Batch name', placeholder: 'CT-Batch-01' }],
+  },
+  {
+    id: 'ps-ct-removemiguser', service: 'Cross-Tenant Migration', name: 'Remove-MigrationUser',
+    template: 'Remove-MigrationUser -Identity "{user}" -Confirm:$false',
+    explanation: 'Removes a user from a migration batch (cleanup before retry / duplicate fix).',
+    module: 'ExchangeOnlineManagement', requiredRole: 'Exchange Administrator', warning: 'Verify the move state first — removing a syncing user discards its progress.',
+    params: [{ key: 'user', label: 'Migration user identity', placeholder: 'user@target.onmicrosoft.com' }],
+  },
+  {
+    id: 'ps-ct-setguid', service: 'Cross-Tenant Migration', name: 'Set-MailUser ExchangeGUID',
+    template: 'Set-MailUser "{upn}" -ExchangeGuid "{guid}"\nGet-MailUser "{upn}" | Select-Object ExchangeGuid',
+    explanation: 'Stamps the source mailbox ExchangeGUID on the target MailUser (mandatory pre-req).',
+    module: 'ExchangeOnlineManagement (target tenant)', requiredRole: 'Exchange Recipient Administrator', warning: 'Wrong GUID = failed migration. Copy from source: Get-Mailbox | fl ExchangeGuid.',
+    params: [
+      { key: 'upn', label: 'Target MailUser', placeholder: 'user@target.onmicrosoft.com' },
+      { key: 'guid', label: 'Source ExchangeGuid', placeholder: 'xxxxxxxx-xxxx-...' },
+    ],
+  },
+  {
+    id: 'ps-ct-x500', service: 'Cross-Tenant Migration', name: 'Set-MailUser X500 proxy',
+    template: 'Set-MailUser "{upn}" -EmailAddresses @{Add="X500:{legdn}"}',
+    explanation: 'Adds the source LegacyExchangeDN as X500 address so old replies/lookups keep resolving.',
+    module: 'ExchangeOnlineManagement (target tenant)', requiredRole: 'Exchange Recipient Administrator', warning: 'Use @{Add=} — never overwrite the address list.',
+    params: [
+      { key: 'upn', label: 'Target MailUser', placeholder: 'user@target.onmicrosoft.com' },
+      { key: 'legdn', label: 'Source LegacyExchangeDN', placeholder: '/o=ExchangeLabs/ou=...' },
+    ],
+  },
+  {
+    id: 'ps-ct-moverequests', service: 'Cross-Tenant Migration', name: 'Get-MoveRequest -Flags CrossTenant',
+    template: 'Get-MoveRequest -Flags CrossTenant | Get-MoveRequestStatistics | Select-Object DisplayName,StatusDetail,PercentComplete,BytesTransferred | Format-Table -AutoSize',
+    explanation: 'All cross-tenant move requests with progress — the low-level view behind migration batches.',
+    module: 'ExchangeOnlineManagement', requiredRole: 'Exchange Administrator', warning: 'Read-only. Add -IncludeReport on statistics for escalation evidence.',
+    params: [],
+  },
+  // ---------- SharePoint ----------
+  {
+    id: 'ps-spo-connect', service: 'SharePoint Online', name: 'Connect-SPOService',
+    template: 'Connect-SPOService -Url https://{tenant}-admin.sharepoint.com',
+    explanation: 'Connects to the SharePoint Online admin shell.',
+    module: 'Microsoft.Online.SharePoint.PowerShell', requiredRole: 'SharePoint Administrator', warning: 'Use the -admin URL.',
+    params: [{ key: 'tenant', label: 'Tenant name', placeholder: 'contoso' }],
+  },
+  {
+    id: 'ps-spo-getsite', service: 'SharePoint Online', name: 'Get-SPOSite',
+    template: 'Get-SPOSite {url} | Format-List Title,Owner,SharingCapability,StorageUsageCurrent,StorageQuota,LockState,Template',
+    explanation: 'Site details: owner, sharing level, storage and lock state.',
+    module: 'Microsoft.Online.SharePoint.PowerShell', requiredRole: 'SharePoint Administrator', warning: 'Read-only.',
+    params: [{ key: 'url', label: 'Site URL', placeholder: 'https://contoso.sharepoint.com/sites/Finance' }],
+  },
+  {
+    id: 'ps-spo-storage', service: 'SharePoint Online', name: 'Check storage (top sites)',
+    template: 'Get-SPOSite -Limit All | Sort-Object StorageUsageCurrent -Descending | Select-Object -First {count} Url,StorageUsageCurrent,StorageQuota | Format-Table -AutoSize',
+    explanation: 'Top storage-consuming sites in the tenant.',
+    module: 'Microsoft.Online.SharePoint.PowerShell', requiredRole: 'SharePoint Administrator', warning: 'Read-only.',
+    params: [{ key: 'count', label: 'Number of sites', placeholder: '20' }],
+  },
+  {
+    id: 'ps-spo-owners', service: 'SharePoint Online', name: 'Get site owners/admins',
+    template: 'Get-SPOUser -Site {url} | Where-Object { $_.IsSiteAdmin } | Select-Object DisplayName,LoginName',
+    explanation: 'Lists site collection administrators of a site.',
+    module: 'Microsoft.Online.SharePoint.PowerShell', requiredRole: 'SharePoint Administrator', warning: 'Read-only.',
+    params: [{ key: 'url', label: 'Site URL', placeholder: 'https://contoso.sharepoint.com/sites/Finance' }],
+  },
+  // ---------- Teams ----------
+  {
+    id: 'ps-teams-connect', service: 'Teams', name: 'Connect-MicrosoftTeams',
+    template: 'Connect-MicrosoftTeams',
+    explanation: 'Connects to the Microsoft Teams PowerShell module.',
+    module: 'MicrosoftTeams', requiredRole: 'Teams Administrator', warning: 'None.',
+    params: [],
+  },
+  {
+    id: 'ps-teams-user', service: 'Teams', name: 'Get Teams user',
+    template: 'Get-CsOnlineUser -Identity {upn} | Format-List DisplayName,Enabled,TeamsMeetingPolicy,TeamsMessagingPolicy,TeamsCallingPolicy,TeamsUpgradeEffectiveMode',
+    explanation: 'User Teams state and effective policies.',
+    module: 'MicrosoftTeams', requiredRole: 'Teams Administrator', warning: 'Read-only.',
+    params: [{ key: 'upn', label: 'User UPN', placeholder: 'user@contoso.com' }],
+  },
+  {
+    id: 'ps-teams-policy', service: 'Teams', name: 'Get Teams policy',
+    template: 'Get-CsTeamsMeetingPolicy -Identity "{policy}" | Format-List',
+    explanation: 'Shows all settings of a Teams meeting policy.',
+    module: 'MicrosoftTeams', requiredRole: 'Teams Administrator', warning: 'Read-only.',
+    params: [{ key: 'policy', label: 'Policy name (or Global)', placeholder: 'Global' }],
+  },
+  // ---------- Migration (native) ----------
+  {
+    id: 'ps-mig-batches', service: 'Migration', name: 'Get migration batches',
+    template: 'Get-MigrationBatch | Format-Table Identity,Status,TotalCount,SyncedCount,FinalizedCount,FailedCount -AutoSize',
+    explanation: 'Overview of all native migration batches and their progress.',
+    module: 'ExchangeOnlineManagement', requiredRole: 'Exchange Administrator', warning: 'Read-only.',
+    params: [],
+  },
+  {
+    id: 'ps-mig-complete', service: 'Migration', name: 'Complete migration batch',
+    template: 'Complete-MigrationBatch "{batch}"',
+    explanation: 'Finalizes a batch (cutover step) — performs the final sync and switches the mailboxes.',
+    module: 'ExchangeOnlineManagement', requiredRole: 'Exchange Administrator', warning: 'CUTOVER ACTION — only per project plan. Cross-tenant: source mailboxes get converted.',
+    params: [{ key: 'batch', label: 'Batch name', placeholder: 'CT-Batch-01' }],
+  },
+];
+
+export const psServices = [...new Set(psTasks.map((t) => t.service))];
