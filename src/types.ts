@@ -227,6 +227,48 @@ export interface ServiceNowSettings {
   password: string;
 }
 
+// ---------- User Provisioning (Graph / hybrid) ----------
+export type AccountType = 'Internal' | 'ExternalMember' | 'Guest';
+
+export interface GroupCatalogueEntry {
+  id: string;            // GUID (cloud) or CN/DN (on-prem)
+  displayName: string;
+  source: 'Cloud' | 'OnPrem' | 'Synced';
+  allowedAccountTypes: AccountType[];
+  approvalRequired: boolean;
+  expiryRequired: boolean;
+  description?: string;
+}
+
+export type ProvisioningStatus =
+  | 'Draft' | 'Validated' | 'AlreadyExists' | 'ValidationError'
+  | 'Created' | 'Invited' | 'PendingSync' | 'ApprovalPending' | 'Failed';
+
+export interface ProvisioningRequest {
+  requestId: string;
+  createdAt: string;
+  requestedBy: string;
+  businessOwner: string;
+  managerUpn: string;
+  ticketNumber: string;
+  accountType: AccountType;
+  firstName: string;
+  lastName: string;
+  displayName: string;
+  mail: string;
+  upnPrefix: string;
+  upnDomain: string;
+  department: string;
+  jobTitle: string;
+  startDate: string;
+  endDate: string;
+  reviewDate: string;
+  groups: string[]; // catalogue entry ids
+  status: ProvisioningStatus;
+  statusMessage: string;
+  targetObjectId?: string;
+}
+
 // ---------- Errors helpers ----------
 export interface MigrationError {
   id: string;

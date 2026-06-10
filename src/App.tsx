@@ -19,6 +19,7 @@ import Escalation from './pages/Escalation';
 import KnowledgeBase from './pages/KnowledgeBase';
 import Notes from './pages/Notes';
 import Settings from './pages/Settings';
+import Provisioning from './pages/Provisioning';
 import Login from './pages/Login';
 import { getSession, Session } from './services/auth';
 
@@ -44,6 +45,7 @@ export default function App() {
           <Route path="/hybrid" element={<Hybrid />} />
           <Route path="/bittitan" element={<BitTitan />} />
           <Route path="/syskit" element={<Syskit />} />
+          <Route path="/provisioning" element={<Provisioning />} />
           <Route path="/tenant-admin" element={<TenantAdmin />} />
           <Route path="/monitoring" element={<Monitoring />} />
           <Route path="/security" element={<Security />} />

@@ -22,6 +22,7 @@ export const NAV = [
   { to: '/hybrid', label: 'Hybrid / On-Prem Connector', icon: Boxes, group: 'Migration' },
   { to: '/bittitan', label: 'BitTitan MigrationWiz', icon: Cloud, group: 'Migration' },
   { to: '/syskit', label: 'Syskit', icon: WorkflowIcon, group: 'Migration' },
+  { to: '/provisioning', label: 'User Provisioning', icon: Users, group: 'Operations' },
   { to: '/tenant-admin', label: 'Tenant Administration', icon: SettingsIcon, group: 'Operations' },
   { to: '/monitoring', label: 'Monitoring', icon: Gauge, group: 'Operations' },
   { to: '/security', label: 'Security Hardening', icon: ShieldCheck, group: 'Operations' },
