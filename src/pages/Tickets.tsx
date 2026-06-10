@@ -1,10 +1,12 @@
 import { useState } from 'react';
-import { Ticket as TicketIcon, Wand2, Trash2 } from 'lucide-react';
+import { Ticket as TicketIcon, Wand2, Trash2, Send, Loader2, ExternalLink } from 'lucide-react';
 import { Badge, Button, Card, Field, PageHeader, Select, TextArea, TextOutput } from '../components/ui';
 import { AIHelper } from '../components/AIHelper';
 import { generateTicket, GeneratedTicket, serviceOptions, categoryOptions } from '../data/ticketGenerator';
 import { Ticket } from '../types';
 import { uid, useLocalStorage } from '../store/useLocalStorage';
+import { serviceNowEnabled } from '../store/settings';
+import { createIncident, SNIncidentResult } from '../services/servicenow';
 
 const emptyTicket = (): Ticket => ({
   id: uid(),
@@ -27,6 +29,22 @@ export default function Tickets() {
   const [tickets, setTickets] = useLocalStorage<Ticket[]>('tickets', []);
   const [form, setForm] = useState<Ticket>(emptyTicket());
   const [generated, setGenerated] = useState<GeneratedTicket | null>(null);
+  const [snBusy, setSnBusy] = useState(false);
+  const [snResult, setSnResult] = useState<SNIncidentResult | null>(null);
+  const [snError, setSnError] = useState('');
+
+  const sendToServiceNow = async () => {
+    if (!generated) return;
+    setSnBusy(true);
+    setSnError('');
+    try {
+      setSnResult(await createIncident(form, `${generated.fullDescription}\n\nFirst troubleshooting steps:\n${generated.troubleshooting}`));
+    } catch (e) {
+      setSnError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSnBusy(false);
+    }
+  };
 
   const set = <K extends keyof Ticket>(k: K, v: Ticket[K]) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -76,6 +94,19 @@ export default function Tickets() {
           )}
           {generated && (
             <>
+              {serviceNowEnabled() && (
+                <Card className="p-4 flex flex-wrap items-center gap-3">
+                  <Button onClick={sendToServiceNow} disabled={snBusy}>
+                    {snBusy ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />} Create incident in ServiceNow
+                  </Button>
+                  {snResult && (
+                    <a href={snResult.link} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-sm font-semibold text-emerald-600 hover:underline">
+                      {snResult.number} created <ExternalLink size={13} />
+                    </a>
+                  )}
+                  {snError && <span className="text-sm text-red-500">{snError}</span>}
+                </Card>
+              )}
               <TextOutput title="Short description" text={generated.shortDescription} />
               <TextOutput title="Full ticket description" text={generated.fullDescription} />
               <TextOutput title="First troubleshooting steps" text={generated.troubleshooting} />

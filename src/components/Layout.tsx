@@ -6,6 +6,8 @@ import {
   ShieldCheck, StickyNote, Sun, Terminal, Ticket, Users, Workflow as WorkflowIcon, X, FolderKanban, Send,
 } from 'lucide-react';
 import { load, save } from '../store/useLocalStorage';
+import { currentAccount } from '../services/sso';
+import { UserCircle2 } from 'lucide-react';
 
 export const NAV = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, group: 'Overview' },
@@ -16,6 +18,7 @@ export const NAV = [
   { to: '/teams', label: 'Microsoft Teams', icon: Users, group: 'Helpdesk' },
   { to: '/migration', label: 'Migration Projects', icon: FolderKanban, group: 'Migration' },
   { to: '/cross-tenant', label: 'Cross-Tenant Migration', icon: ArrowLeftRight, group: 'Migration' },
+  { to: '/hybrid', label: 'Hybrid / On-Prem Connector', icon: Boxes, group: 'Migration' },
   { to: '/bittitan', label: 'BitTitan MigrationWiz', icon: Cloud, group: 'Migration' },
   { to: '/syskit', label: 'Syskit', icon: WorkflowIcon, group: 'Migration' },
   { to: '/tenant-admin', label: 'Tenant Administration', icon: SettingsIcon, group: 'Operations' },
@@ -36,7 +39,12 @@ export function Layout() {
   const [dark, setDark] = useState(() => load('dark-mode', window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false));
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [account, setAccount] = useState<string | null>(null);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    currentAccount().then((a) => setAccount(a ? (a.name ?? a.username) : null)).catch(() => {});
+  }, []);
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', dark);
@@ -120,6 +128,14 @@ export function Layout() {
             )}
           </div>
           <div className="ml-auto flex items-center gap-2">
+            <button
+              onClick={() => navigate('/settings')}
+              className="hidden sm:flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-600 px-2.5 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
+              title={account ? 'Signed in via Microsoft 365' : 'Sign in (Settings > SSO)'}
+            >
+              <UserCircle2 size={15} className={account ? 'text-emerald-500' : 'text-slate-400'} />
+              {account ?? 'Sign in'}
+            </button>
             <button
               onClick={() => setDark(!dark)}
               className="rounded-lg border border-slate-200 dark:border-slate-600 p-2 text-slate-500 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"

@@ -81,10 +81,13 @@ export interface MigrationProject {
 }
 
 // ---------- Knowledge base ----------
+export type SupportLevel = 'L1' | 'L2' | 'L3';
+
 export interface KBArticle {
   id: string;
   title: string;
   service: string;
+  level: SupportLevel;
   tags: string[];
   body: string;
   favorite: boolean;
@@ -207,6 +210,21 @@ export interface AISettings {
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+}
+
+// ---------- Microsoft 365 SSO (Entra ID) ----------
+export interface SSOSettings {
+  enabled: boolean;
+  tenantId: string;
+  clientId: string;
+}
+
+// ---------- ServiceNow integration ----------
+export interface ServiceNowSettings {
+  enabled: boolean;
+  instanceUrl: string; // https://yourinstance.service-now.com
+  username: string;
+  password: string;
 }
 
 // ---------- Errors helpers ----------

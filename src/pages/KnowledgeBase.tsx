@@ -2,10 +2,12 @@ import { useMemo, useState } from 'react';
 import { BookOpen, Plus, Star, Pencil, Trash2 } from 'lucide-react';
 import { Badge, Button, Card, CopyButton, Field, PageHeader, Select, TextArea } from '../components/ui';
 import { seedArticles } from '../data/kbArticles';
-import { KBArticle } from '../types';
+import { KBArticle, SupportLevel } from '../types';
 import { uid, useLocalStorage } from '../store/useLocalStorage';
 
 const services = ['All', 'Entra ID', 'Exchange Online', 'SharePoint Online', 'Teams', 'Migration', 'Cross-Tenant Migration', 'BitTitan', 'Syskit', 'Security'];
+const levels: ('All' | SupportLevel)[] = ['All', 'L1', 'L2', 'L3'];
+const levelColor: Record<SupportLevel, string> = { L1: 'green', L2: 'orange', L3: 'red' };
 
 export default function KnowledgeBase() {
   // Custom articles + overrides (favorites/edits of seeds) are stored locally.
@@ -13,18 +15,21 @@ export default function KnowledgeBase() {
   const [overrides, setOverrides] = useLocalStorage<Record<string, Partial<KBArticle>>>('kb-overrides', {});
   const [query, setQuery] = useState('');
   const [service, setService] = useState('All');
+  const [level, setLevel] = useState<'All' | SupportLevel>('All');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editing, setEditing] = useState<KBArticle | null>(null);
   const [favOnly, setFavOnly] = useState(false);
 
   const articles = useMemo<KBArticle[]>(() => {
     const seeds = seedArticles.map((a) => ({ ...a, ...overrides[a.id] }));
-    return [...custom, ...seeds];
+    // older custom articles may predate the level field
+    return [...custom.map((c) => ({ ...c, level: c.level ?? 'L1' })), ...seeds];
   }, [custom, overrides]);
 
   const filtered = articles.filter((a) => {
     if (favOnly && !a.favorite) return false;
     if (service !== 'All' && a.service !== service) return false;
+    if (level !== 'All' && a.level !== level) return false;
     const q = query.toLowerCase();
     return !q || a.title.toLowerCase().includes(q) || a.body.toLowerCase().includes(q) || a.tags.some((t) => t.includes(q));
   });
@@ -44,7 +49,7 @@ export default function KnowledgeBase() {
         return exists ? prev.map((c) => (c.id === editing.id ? editing : c)) : [editing, ...prev];
       });
     } else {
-      setOverrides((prev) => ({ ...prev, [editing.id]: { title: editing.title, body: editing.body, tags: editing.tags, service: editing.service } }));
+      setOverrides((prev) => ({ ...prev, [editing.id]: { title: editing.title, body: editing.body, tags: editing.tags, service: editing.service, level: editing.level } }));
     }
     setSelectedId(editing.id);
     setEditing(null);
@@ -58,10 +63,18 @@ export default function KnowledgeBase() {
         <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search articles, tags, content..."
           className="w-72 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none text-slate-800 dark:text-slate-100" />
         <div className="w-56"><Select label="" value={service} onChange={setService} options={services.map((s) => ({ value: s, label: s }))} /></div>
+        <div className="flex overflow-hidden rounded-lg border border-slate-300 dark:border-slate-600">
+          {levels.map((l) => (
+            <button key={l} onClick={() => setLevel(l)}
+              className={`px-3 py-2 text-sm font-semibold ${level === l ? 'bg-blue-600 text-white' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'}`}>
+              {l}
+            </button>
+          ))}
+        </div>
         <button onClick={() => setFavOnly(!favOnly)} className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium ${favOnly ? 'border-amber-400 text-amber-500' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}>
           <Star size={14} className={favOnly ? 'fill-amber-400 text-amber-400' : ''} /> Favorites
         </button>
-        <Button variant="secondary" onClick={() => setEditing({ id: uid(), title: '', service: 'Entra ID', tags: [], body: '', favorite: false, custom: true })}>
+        <Button variant="secondary" onClick={() => setEditing({ id: uid(), title: '', service: 'Entra ID', level: 'L1', tags: [], body: '', favorite: false, custom: true })}>
           <Plus size={15} /> Add article
         </Button>
       </div>
@@ -69,8 +82,9 @@ export default function KnowledgeBase() {
       {editing && (
         <Card className="mb-5 p-5 space-y-3">
           <Field label="Title" value={editing.title} onChange={(v) => setEditing({ ...editing, title: v })} />
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-3">
             <Select label="Service" value={editing.service} onChange={(v) => setEditing({ ...editing, service: v })} options={services.filter((s) => s !== 'All').map((s) => ({ value: s, label: s }))} />
+            <Select label="Support level" value={editing.level} onChange={(v) => setEditing({ ...editing, level: v as SupportLevel })} options={['L1', 'L2', 'L3'].map((l) => ({ value: l, label: l }))} />
             <Field label="Tags (comma separated)" value={editing.tags.join(', ')} onChange={(v) => setEditing({ ...editing, tags: v.split(',').map((t) => t.trim()).filter(Boolean) })} />
           </div>
           <TextArea label="Content (steps, commands, notes)" value={editing.body} onChange={(v) => setEditing({ ...editing, body: v })} rows={10} />
@@ -92,6 +106,7 @@ export default function KnowledgeBase() {
               </div>
               <div className="mt-1 flex flex-wrap items-center gap-1.5">
                 <Badge color="blue">{a.service}</Badge>
+                <Badge color={levelColor[a.level]}>{a.level}</Badge>
                 {a.custom && <Badge color="purple">custom</Badge>}
                 {a.tags.slice(0, 3).map((t) => <span key={t} className="text-xs text-slate-400">#{t}</span>)}
               </div>

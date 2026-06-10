@@ -5,6 +5,7 @@ import Tickets from './pages/Tickets';
 import { EntraAssistant, ExchangeAssistant, SharePointAssistant, TeamsAssistant } from './pages/Assistants';
 import Migration from './pages/Migration';
 import CrossTenant from './pages/CrossTenant';
+import Hybrid from './pages/Hybrid';
 import BitTitan from './pages/BitTitan';
 import Syskit from './pages/Syskit';
 import TenantAdmin from './pages/TenantAdmin';
@@ -31,6 +32,7 @@ export default function App() {
           <Route path="/teams" element={<TeamsAssistant />} />
           <Route path="/migration" element={<Migration />} />
           <Route path="/cross-tenant" element={<CrossTenant />} />
+          <Route path="/hybrid" element={<Hybrid />} />
           <Route path="/bittitan" element={<BitTitan />} />
           <Route path="/syskit" element={<Syskit />} />
           <Route path="/tenant-admin" element={<TenantAdmin />} />

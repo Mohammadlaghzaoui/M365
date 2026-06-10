@@ -1,4 +1,4 @@
-import { AISettings } from '../types';
+import { AISettings, SSOSettings, ServiceNowSettings } from '../types';
 import { load, save } from './useLocalStorage';
 
 export const DEFAULT_SYSTEM_PROMPT =
@@ -23,4 +23,31 @@ export function saveAISettings(s: AISettings) {
 export function aiEnabled(): boolean {
   const s = getAISettings();
   return s.provider !== 'disabled' && !!s.apiKey;
+}
+
+// ---------- Microsoft 365 SSO ----------
+export const DEFAULT_SSO: SSOSettings = { enabled: false, tenantId: '', clientId: '' };
+
+export function getSSOSettings(): SSOSettings {
+  return { ...DEFAULT_SSO, ...load<Partial<SSOSettings>>('sso-settings', {}) };
+}
+
+export function saveSSOSettings(s: SSOSettings) {
+  save('sso-settings', s);
+}
+
+// ---------- ServiceNow ----------
+export const DEFAULT_SERVICENOW: ServiceNowSettings = { enabled: false, instanceUrl: '', username: '', password: '' };
+
+export function getServiceNowSettings(): ServiceNowSettings {
+  return { ...DEFAULT_SERVICENOW, ...load<Partial<ServiceNowSettings>>('servicenow-settings', {}) };
+}
+
+export function saveServiceNowSettings(s: ServiceNowSettings) {
+  save('servicenow-settings', s);
+}
+
+export function serviceNowEnabled(): boolean {
+  const s = getServiceNowSettings();
+  return s.enabled && !!s.instanceUrl && !!s.username;
 }
