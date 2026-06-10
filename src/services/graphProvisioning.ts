@@ -1,4 +1,5 @@
 import { getGraphToken } from './sso';
+import { getIntegrations } from '../store/settings';
 import { AccountType, GroupCatalogueEntry, ProvisioningRequest } from '../types';
 
 /**
@@ -139,17 +140,21 @@ export async function addToCloudGroup(userObjectId: string, groupId: string): Pr
 
 /** AD-first PowerShell for INTERNAL accounts — hybrid rule: never cloud-only (runbook 6.1). */
 export function buildOnPremScript(req: ProvisioningRequest, groups: GroupCatalogueEntry[]): string {
+  const ad = getIntegrations().onpremAd;
   const upn = `${req.upnPrefix}@${req.upnDomain}`;
   const onPremGroups = groups.filter((g) => g.source !== 'Cloud');
   const cloudGroups = groups.filter((g) => g.source === 'Cloud');
+  const ou = ad.enabled && ad.defaultUserOu ? ad.defaultUserOu : 'OU=Internal Users,DC=yourdomain,DC=local';
+  const dcParam = ad.enabled && ad.dcHostname ? ` -Server ${ad.dcHostname}` : '';
   return `# ===== INTERNAL ACCOUNT — hybrid AD-first provisioning (request ${req.requestId}) =====
 # Rule: internal identities are created in On-Premises AD and synced to Entra ID.
-# Run in the on-prem AD PowerShell context with a delegated service account (no Domain Admin).
+# Run with the delegated provisioning account${ad.enabled && ad.serviceAccount ? ` (${ad.serviceAccount})` : ''} — never Domain Admin.
+${ad.enabled && ad.domainFqdn ? `# Domain: ${ad.domainFqdn}${ad.entraConnectServer ? ` | Entra Connect: ${ad.entraConnectServer}` : ''}` : '# Configure the On-Prem AD connector in Settings > Integrations to auto-fill OU/domain values.'}
 
-$ou = "OU=Internal Users,DC=yourdomain,DC=local"   # adjust to the internal OU per naming policy
+$ou = "${ou}"
 $password = Read-Host "Initial password" -AsSecureString
 
-New-ADUser \`
+New-ADUser${dcParam} \`
   -GivenName "${req.firstName}" \`
   -Surname "${req.lastName}" \`
   -Name "${req.displayName}" \`
@@ -173,8 +178,8 @@ ${req.managerUpn ? `Set-ADUser "${req.upnPrefix}" -Manager (Get-ADUser -Filter "
 # On-prem / synced group memberships (managed on-prem per catalogue):
 ${onPremGroups.length ? onPremGroups.map((g) => `Add-ADGroupMember -Identity "${g.id}" -Members "${req.upnPrefix}"`).join('\n') : '# (none selected)'}
 
-# Trigger sync (on the Entra Connect server):
-Start-ADSyncSyncCycle -PolicyType Delta
+# Trigger sync${ad.enabled && ad.entraConnectServer ? ` on ${ad.entraConnectServer}` : ' (on the Entra Connect server)'}:
+${ad.enabled && ad.entraConnectServer ? `Invoke-Command -ComputerName ${ad.entraConnectServer} -ScriptBlock { Start-ADSyncSyncCycle -PolicyType Delta }` : 'Start-ADSyncSyncCycle -PolicyType Delta'}
 
 # AFTER sync completes — cloud-only group/license assignment (run in Graph PowerShell):
 ${cloudGroups.length ? cloudGroups.map((g) => `# New-MgGroupMember -GroupId "${g.id}" -DirectoryObjectId (Get-MgUser -UserId "${upn}").Id  # ${g.displayName}`).join('\n') : '# (none selected)'}

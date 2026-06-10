@@ -6,9 +6,10 @@ import { useLocalStorage, load } from '../store/useLocalStorage';
 import { Ticket, MigrationProject, SecurityControlState, ProvisioningRequest, ConsoleProjectState } from '../types';
 import { securityControls } from '../data/security';
 import { psTasks } from '../data/psTasks';
-import { ExternalLink, Star, Activity, Plug } from 'lucide-react';
-import { integrationStatus, getBranding } from '../store/settings';
+import { ExternalLink, Star, Activity } from 'lucide-react';
+import { getBranding } from '../store/settings';
 import { getSession } from '../services/auth';
+import { DonutChart, HBarChart, VBarChart } from '../components/charts';
 
 const colorMap: Record<string, string> = {
   blue: 'bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-300',
@@ -32,7 +33,6 @@ export default function Dashboard() {
   const provLog = load<ProvisioningRequest[]>('provisioning-requests', []);
   const mwStates = load<Record<string, ConsoleProjectState>>('mw-console', {});
   const mwItems = Object.values(mwStates).flatMap((s) => s.items);
-  const integrations = integrationStatus();
   const branding = getBranding();
   const session = getSession();
 
@@ -45,6 +45,24 @@ export default function Dashboard() {
   const favTasks = psTasks.filter((t) => favPs.includes(t.id));
   const mwCompleted = mwItems.filter((i) => i.status === 'Completed').length;
   const mwFailed = mwItems.filter((i) => i.status === 'Failed' || i.status === 'VerifyFailed').length;
+  const mwRunning = mwItems.filter((i) => ['Verifying', 'Assessing', 'PreStaging', 'Migrating', 'DeltaSync'].includes(i.status)).length;
+  const mwPending = mwItems.length - mwCompleted - mwFailed - mwRunning;
+
+  const secCounts = {
+    compliant,
+    partial: securityControls.filter((c) => secState[c.id]?.status === 'partial').length,
+    nonCompliant: securityControls.filter((c) => secState[c.id]?.status === 'non-compliant').length,
+  };
+  const secOpen = securityControls.length - secCounts.compliant - secCounts.partial - secCounts.nonCompliant;
+
+  const ticketsByService = Object.entries(
+    openTickets.reduce<Record<string, number>>((acc, t) => ({ ...acc, [t.service]: (acc[t.service] ?? 0) + 1 }), {}),
+  ).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([label, value]) => ({ label, value }));
+
+  const urgencyColors: Record<string, string> = { critical: '#dc2626', high: '#f59e0b', medium: '#2563eb', low: '#64748b' };
+  const ticketsByUrgency = (['critical', 'high', 'medium', 'low'] as const)
+    .map((u) => ({ label: u, value: openTickets.filter((t) => t.urgency === u).length, color: urgencyColors[u] }))
+    .filter((d) => d.value > 0);
 
   const activity: { time: string; text: string; color: string }[] = [
     ...provLog.slice(0, 6).map((p) => ({ time: p.createdAt, text: `Provisioning ${p.status}: ${p.displayName || p.mail} (${p.accountType})`, color: p.status === 'Failed' || p.status === 'ValidationError' ? 'bg-red-500' : p.status === 'Created' || p.status === 'Invited' ? 'bg-emerald-500' : 'bg-amber-500' })),
@@ -73,18 +91,50 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Integration status strip */}
-      <Card className="p-4">
-        <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400"><Plug size={13} /> Platform integrations</div>
-        <div className="flex flex-wrap gap-2">
-          {integrations.map((i) => (
-            <Link key={i.name} to="/settings" className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${i.enabled ? 'border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-900/20' : 'border-slate-200 dark:border-slate-700 text-slate-400 hover:border-blue-300'}`}>
-              <span className={`h-1.5 w-1.5 rounded-full ${i.enabled ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600'}`} />
-              {i.name}
-            </Link>
-          ))}
-        </div>
-      </Card>
+      {/* Analytics charts */}
+      <div className="grid gap-4 lg:grid-cols-3">
+        <Card className="p-5">
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Security baseline</h2>
+          <DonutChart
+            centerLabel="of 27 controls compliant"
+            centerValue={`${secPct}%`}
+            segments={[
+              { label: 'Compliant', value: secCounts.compliant, color: '#10b981' },
+              { label: 'Partial', value: secCounts.partial, color: '#f59e0b' },
+              { label: 'Non-compliant', value: secCounts.nonCompliant, color: '#dc2626' },
+              { label: 'Not reviewed', value: secOpen, color: '#94a3b8' },
+            ]}
+          />
+        </Card>
+        <Card className="p-5">
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Open tickets by service</h2>
+          {ticketsByService.length ? <HBarChart data={ticketsByService} /> : <p className="text-xs text-slate-400">No open tickets — nice and quiet. 🎉</p>}
+          {ticketsByUrgency.length > 0 && (
+            <div className="mt-4">
+              <h3 className="mb-2 text-xs font-semibold uppercase text-slate-400">By urgency</h3>
+              <HBarChart data={ticketsByUrgency} />
+            </div>
+          )}
+        </Card>
+        <Card className="p-5">
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Migration pipeline</h2>
+          {mwItems.length ? (
+            <VBarChart data={[
+              { label: 'Pending', value: mwPending },
+              { label: 'Running', value: mwRunning },
+              { label: 'Completed', value: mwCompleted },
+              { label: 'Failed', value: mwFailed },
+            ]} />
+          ) : (
+            <p className="text-xs text-slate-400">No line items yet — open the <Link to="/migration-console" className="text-blue-500 hover:underline">Migration Console</Link> and import users.</p>
+          )}
+          <div className="mt-4">
+            <h3 className="mb-2 text-xs font-semibold uppercase text-slate-400">Daily checks today</h3>
+            <ProgressBar value={dailyPct} color="bg-blue-600" />
+            <p className="mt-1 text-xs text-slate-400">{checked.length} of {dailyChecklist.length} completed</p>
+          </div>
+        </Card>
+      </div>
 
       {/* Stats */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">

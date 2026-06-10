@@ -89,6 +89,17 @@ export interface IntegrationSettings {
   autotask: { enabled: boolean; apiUser: string; secret: string; integrationCode: string };
   freshservice: { enabled: boolean; domain: string; apiKey: string };
   intune: { enabled: boolean; note: string };
+  onpremAd: {
+    enabled: boolean;
+    domainFqdn: string;        // ad.customer.local
+    netbios: string;           // CUSTOMER
+    dcHostname: string;        // dc01.ad.customer.local
+    entraConnectServer: string;
+    serviceAccount: string;    // delegated provisioning account (no Domain Admin)
+    defaultUserOu: string;     // OU=Internal Users,DC=...
+    externalUserOu: string;    // OU=External,DC=...
+    upnSuffix: string;         // customer.com
+  };
 }
 
 export const DEFAULT_INTEGRATIONS: IntegrationSettings = {
@@ -104,6 +115,7 @@ export const DEFAULT_INTEGRATIONS: IntegrationSettings = {
   autotask: { enabled: false, apiUser: '', secret: '', integrationCode: '' },
   freshservice: { enabled: false, domain: '', apiKey: '' },
   intune: { enabled: false, note: '' },
+  onpremAd: { enabled: false, domainFqdn: '', netbios: '', dcHostname: '', entraConnectServer: '', serviceAccount: '', defaultUserOu: '', externalUserOu: '', upnSuffix: '' },
 };
 
 export function getIntegrations(): IntegrationSettings {
@@ -124,6 +136,7 @@ export function integrationStatus(): { name: string; enabled: boolean }[] {
   return [
     { name: 'AI Assistant', enabled: ai.provider !== 'disabled' && !!ai.apiKey },
     { name: 'Microsoft SSO', enabled: sso.enabled && !!sso.clientId },
+    { name: 'On-Prem AD', enabled: i.onpremAd.enabled && !!i.onpremAd.domainFqdn },
     { name: 'ServiceNow', enabled: sn.enabled && !!sn.instanceUrl },
     { name: 'TOPdesk', enabled: i.topdesk.enabled && !!i.topdesk.baseUrl },
     { name: 'Jira', enabled: i.jira.enabled && !!i.jira.baseUrl },

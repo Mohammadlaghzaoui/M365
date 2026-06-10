@@ -8,7 +8,7 @@ import { AISettings, AIProvider, SSOSettings, ServiceNowSettings } from '../type
 import {
   DEFAULT_SYSTEM_PROMPT, getAISettings, saveAISettings, getSSOSettings, saveSSOSettings,
   getServiceNowSettings, saveServiceNowSettings, getBranding, saveBranding, BrandingSettings,
-  getIntegrations, saveIntegrations, IntegrationSettings,
+  getIntegrations, saveIntegrations, IntegrationSettings, integrationStatus,
 } from '../store/settings';
 import { testConnection } from '../services/ai';
 import { signIn, signOut, currentAccount } from '../services/sso';
@@ -202,8 +202,50 @@ function IntegrationsTab() {
     saveIntegrations(next);
   };
 
+  const status = integrationStatus();
+
   return (
     <div className="space-y-5">
+      {/* Status strip */}
+      <Card className="p-4">
+        <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Integration status</div>
+        <div className="flex flex-wrap gap-2">
+          {status.map((i) => (
+            <span key={i.name} className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${i.enabled ? 'border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-900/20' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${i.enabled ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600'}`} />
+              {i.name}
+            </span>
+          ))}
+        </div>
+      </Card>
+
+      {/* On-Premises Active Directory */}
+      <Card className="p-5 space-y-3">
+        <Section title="On-Premises Active Directory (hybrid)">
+          <label className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
+            <input type="checkbox" checked={intg.onpremAd.enabled} onChange={(e) => setI('onpremAd', { enabled: e.target.checked })} className="h-4 w-4 rounded border-slate-300 text-blue-600" />
+            Enable On-Prem AD connector — feeds the User Provisioning AD scripts and the Hybrid migration module
+          </label>
+          {intg.onpremAd.enabled && (
+            <>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <Field label="AD domain FQDN" value={intg.onpremAd.domainFqdn} onChange={(v) => setI('onpremAd', { domainFqdn: v })} placeholder="ad.customer.local" />
+                <Field label="NetBIOS name" value={intg.onpremAd.netbios} onChange={(v) => setI('onpremAd', { netbios: v })} placeholder="CUSTOMER" />
+                <Field label="Domain controller hostname" value={intg.onpremAd.dcHostname} onChange={(v) => setI('onpremAd', { dcHostname: v })} placeholder="dc01.ad.customer.local" />
+                <Field label="Entra Connect server" value={intg.onpremAd.entraConnectServer} onChange={(v) => setI('onpremAd', { entraConnectServer: v })} placeholder="sync01.ad.customer.local" />
+                <Field label="Delegated service account (no Domain Admin)" value={intg.onpremAd.serviceAccount} onChange={(v) => setI('onpremAd', { serviceAccount: v })} placeholder="CUSTOMER\\svc-provisioning" />
+                <Field label="UPN suffix (routable)" value={intg.onpremAd.upnSuffix} onChange={(v) => setI('onpremAd', { upnSuffix: v })} placeholder="customer.com" />
+                <Field label="Default OU — internal users" value={intg.onpremAd.defaultUserOu} onChange={(v) => setI('onpremAd', { defaultUserOu: v })} placeholder="OU=Internal Users,DC=ad,DC=customer,DC=local" />
+                <Field label="OU — external members" value={intg.onpremAd.externalUserOu} onChange={(v) => setI('onpremAd', { externalUserOu: v })} placeholder="OU=External,DC=ad,DC=customer,DC=local" />
+              </div>
+              <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+                Browsers cannot talk LDAP — this configuration personalizes the generated AD provisioning scripts (correct OU, domain, sync server) and is the contract for a future on-prem agent/Azure Automation hybrid worker that executes them automatically.
+              </p>
+            </>
+          )}
+        </Section>
+      </Card>
+
       {/* ServiceNow */}
       <Card className="p-5 space-y-3">
         <Section title="ServiceNow (ITSM)">
