@@ -105,6 +105,7 @@ export interface IntegrationSettings {
   autotask: { enabled: boolean; apiUser: string; secret: string; integrationCode: string };
   freshservice: { enabled: boolean; domain: string; apiKey: string };
   intune: { enabled: boolean; note: string };
+  agent: { enabled: boolean; url: string; apiKey: string };
   onpremAd: {
     enabled: boolean;
     domainFqdn: string;        // ad.customer.local
@@ -131,6 +132,7 @@ export const DEFAULT_INTEGRATIONS: IntegrationSettings = {
   autotask: { enabled: false, apiUser: '', secret: '', integrationCode: '' },
   freshservice: { enabled: false, domain: '', apiKey: '' },
   intune: { enabled: false, note: '' },
+  agent: { enabled: false, url: 'http://localhost:8787', apiKey: '' },
   onpremAd: { enabled: false, domainFqdn: '', netbios: '', dcHostname: '', entraConnectServer: '', serviceAccount: '', defaultUserOu: '', externalUserOu: '', upnSuffix: '' },
 };
 
@@ -151,6 +153,7 @@ export function integrationStatus(): { name: string; enabled: boolean }[] {
   const sso = getSSOSettings();
   return [
     { name: 'AI Assistant', enabled: ai.provider !== 'disabled' && !!ai.apiKey },
+    { name: 'Migration Agent', enabled: i.agent.enabled && !!i.agent.url && !!i.agent.apiKey },
     { name: 'Microsoft SSO', enabled: sso.enabled && !!sso.clientId },
     { name: 'Google SSO', enabled: getGoogleSSO().enabled && !!getGoogleSSO().clientId },
     { name: 'On-Prem AD', enabled: i.onpremAd.enabled && !!i.onpremAd.domainFqdn },

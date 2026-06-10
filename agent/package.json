@@ -1,0 +1,19 @@
+{
+  "name": "workpilot-migration-agent",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "WorkPilot Migration Agent — executes real M365 endpoint migrations, provisioning and validation on behalf of the WorkPilot portal.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "dependencies": {
+    "@azure/identity": "^4.5.0",
+    "@microsoft/microsoft-graph-client": "^3.0.7",
+    "cors": "^2.8.5",
+    "express": "^4.21.1",
+    "isomorphic-fetch": "^3.0.0"
+  }
+}

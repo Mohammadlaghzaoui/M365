@@ -10,6 +10,8 @@ import { currentAccount } from '../services/sso';
 import { AccountType, GroupCatalogueEntry, ProvisioningRequest, ProvisioningStatus } from '../types';
 import { accountTypeInfo, buildRequestJson, seedCatalogue, validateRequest } from '../data/provisioning';
 import { addToCloudGroup, buildOnPremScript, createMemberUser, duplicateCheck, inviteGuest, verifyManager } from '../services/graphProvisioning';
+import { agentConfigured, startProvision, trackJob } from '../services/agent';
+import { getIntegrations } from '../store/settings';
 
 const ts = () => new Date().toLocaleTimeString('en-GB');
 
@@ -180,10 +182,28 @@ export default function Provisioning() {
     setProdOutput([]);
     const out: { title: string; text: string }[] = [];
     try {
-      if (req.accountType === 'Internal') {
-        // Hybrid rule: AD-first, never cloud-only. Emit the runbook script + PendingSync.
+      // If the agent is connected, INTERNAL accounts are created for real on-prem AD by the agent.
+      if (req.accountType === 'Internal' && agentConfigured()) {
+        const ad = getIntegrations().onpremAd;
+        out.push({ title: 'Agent execution', text: 'Submitting on-prem AD creation to the Migration Agent…' });
+        setProdOutput([...out]);
+        const { jobId } = await startProvision({
+          accountType: 'Internal',
+          firstName: req.firstName, lastName: req.lastName, displayName: req.displayName,
+          upnPrefix: req.upnPrefix, upn: `${req.upnPrefix}@${req.upnDomain}`, mail: req.mail,
+          ou: ad.defaultUserOu, entraConnectServer: ad.entraConnectServer,
+          script: buildOnPremScript(req, selectedGroups),
+        });
+        const logs: string[] = [];
+        const job = await trackJob(jobId, (l) => { logs.push(`${l.text}`); });
+        out.length = 0;
+        out.push({ title: `Agent job ${job.status}`, text: logs.join('\n') || '(no output)' });
+        out.push({ title: 'Status', text: JSON.stringify(job.result ?? { status: job.status }, null, 2) });
+        pushLog(job.status === 'completed' ? 'PendingSync' : 'Failed', job.status === 'completed' ? 'Agent created AD object — waiting for Entra sync' : (job.error ?? 'Agent failed'));
+      } else if (req.accountType === 'Internal') {
+        // No agent: emit the runbook script + PendingSync for manual execution.
         out.push({ title: 'On-Premises AD provisioning script (run via delegated service account)', text: buildOnPremScript(req, selectedGroups) });
-        out.push({ title: 'Status', text: JSON.stringify({ status: 'PendingSync', message: 'User created on-prem - waiting for Entra sync.', requestId: req.ticketNumber || req.requestId, nextAction: 'Verify object after sync, then assign cloud groups.' }, null, 2) });
+        out.push({ title: 'Status', text: JSON.stringify({ status: 'PendingSync', message: 'User created on-prem - waiting for Entra sync.', requestId: req.ticketNumber || req.requestId, nextAction: 'Verify object after sync, then assign cloud groups. Connect the Migration Agent to run this automatically.' }, null, 2) });
         pushLog('PendingSync', 'AD-first script issued — waiting for Entra Connect sync');
       } else if (req.accountType === 'ExternalMember') {
         if (req.managerUpn) await verifyManager(req.managerUpn);

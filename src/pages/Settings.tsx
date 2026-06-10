@@ -16,6 +16,7 @@ import { signIn, signOut, currentAccount } from '../services/sso';
 import { googleSignIn } from '../services/googleAuth';
 import { testServiceNow } from '../services/servicenow';
 import { testJira, testZendesk, testTeamsWebhook, testSlackWebhook } from '../services/integrations';
+import { agentHealth } from '../services/agent';
 import { addUser, changePassword, getSession, listUsers, removeUser } from '../services/auth';
 import { load, save } from '../store/useLocalStorage';
 
@@ -247,6 +248,10 @@ function IntegrationsTab() {
   const [sn, setSn] = useState<ServiceNowSettings>(getServiceNowSettings());
   const [intg, setIntg] = useState<IntegrationSettings>(getIntegrations());
   const snTest = useTest(testServiceNow);
+  const agentTest = useTest(async () => {
+    const h = await agentHealth();
+    return `Connected — ${h.name} v${h.version} on ${h.host} · PowerShell: ${h.capabilities.powershell ? 'yes' : 'no'} · Graph: ${h.capabilities.graph ? 'configured' : 'no'}`;
+  });
   const jiraTest = useTest(testJira);
   const zdTest = useTest(testZendesk);
   const teamsTest = useTest(testTeamsWebhook);
@@ -274,6 +279,33 @@ function IntegrationsTab() {
             </span>
           ))}
         </div>
+      </Card>
+
+      {/* Migration Agent */}
+      <Card className="p-5 space-y-3 border-violet-200 dark:border-violet-800">
+        <Section title="WorkPilot Migration Agent (real execution)">
+          <label className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
+            <input type="checkbox" checked={intg.agent.enabled} onChange={(e) => setI('agent', { enabled: e.target.checked })} className="h-4 w-4 rounded border-slate-300 text-blue-600" />
+            Enable agent — runs migrations & provisioning for real on a trusted host (AD / Exchange / Graph)
+          </label>
+          {intg.agent.enabled && (
+            <div className="mt-3 space-y-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Agent URL" value={intg.agent.url} onChange={(v) => setI('agent', { url: v })} placeholder="https://agent.sorrento.cloud or http://localhost:8787" />
+                <Field label="Agent API key (X-API-Key)" type="password" value={intg.agent.apiKey} onChange={(v) => setI('agent', { apiKey: v })} />
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <Button variant="ai" onClick={agentTest.run} disabled={agentTest.state === 'testing' || !intg.agent.url}>
+                  {agentTest.state === 'testing' ? <Loader2 size={15} className="animate-spin" /> : <Plug size={15} />} Test agent connection
+                </Button>
+                <TestBadge state={agentTest.state} msg={agentTest.msg} />
+              </div>
+              <p className="text-xs text-violet-600 dark:text-violet-400">
+                The agent is a small Node.js service you run on a domain-joined server or jump host (see <code>/agent</code> in the repo). It executes local PowerShell (New-ADUser, New-MigrationBatch, Entra Connect sync) and Microsoft Graph app-only calls. The portal never holds these credentials — it only orchestrates the agent over HTTPS with this API key.
+              </p>
+            </div>
+          )}
+        </Section>
       </Card>
 
       {/* On-Premises Active Directory */}

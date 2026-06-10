@@ -5,7 +5,9 @@ import { uid, useLocalStorage } from '../store/useLocalStorage';
 import { ConsoleProjectState, MigrationLineItem, MigrationPass, MigrationProject } from '../types';
 import { buildStages, migrationTypeLabels } from '../data/migrationStages';
 import { getIntegrations } from '../store/settings';
+import { agentConfigured, verifyEndpoint, startMigration, trackJob, agentHealth, AgentHealth } from '../services/agent';
 import { Link } from 'react-router-dom';
+import { Cpu, CheckCircle2, XCircle } from 'lucide-react';
 
 /**
  * Migration Console — MigrationWiz-style operational console on top of the
@@ -67,6 +69,48 @@ export default function MigrationConsole() {
   const [quickName, setQuickName] = useState('');
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const bittitanKey = getIntegrations().bittitan;
+  const hasAgent = agentConfigured();
+  const [agentInfo, setAgentInfo] = useState<AgentHealth | null>(null);
+  const [agentOk, setAgentOk] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (!hasAgent) return;
+    agentHealth().then((h) => { setAgentInfo(h); setAgentOk(true); }).catch(() => setAgentOk(false));
+  }, [hasAgent]);
+
+  const verifyViaAgent = async () => {
+    addLog('Agent: verifying endpoints (real connectivity check) ...', 'cmd');
+    for (const [key, type] of [['sourceEndpoint', 'source'], ['destEndpoint', 'destination']] as const) {
+      const epType = state[key].type === 'Exchange On-Premises (EWS)' ? 'exchange-onprem' : state[key].type === 'Microsoft 365' ? 'graph' : 'graph';
+      try {
+        const r = await verifyEndpoint(epType);
+        if (r.verified) { setState((s) => ({ ...s, [key]: { ...s[key], verified: true } })); addLog(`Agent: ${type} endpoint OK — ${r.detail ?? ''}`, 'ok'); }
+        else { addLog(`Agent: ${type} endpoint failed — ${r.error ?? ''}`, 'err'); }
+      } catch (e) {
+        addLog(`Agent: ${type} verify error — ${e instanceof Error ? e.message : e}`, 'err');
+      }
+    }
+  };
+
+  const fullMigrateViaAgent = async () => {
+    const queue = items.filter((i) => ['Verified', 'Assessed', 'PreStaged'].includes(i.status));
+    if (!queue.length) { addLog('No eligible items for the agent migration.', 'warn'); return; }
+    addLog(`Agent: submitting migration batch for ${queue.length} mailbox(es) ...`, 'cmd');
+    try {
+      const { jobId } = await startMigration({
+        batchName: `${project?.name ?? 'batch'}-${Date.now().toString(36)}`,
+        users: queue.map((i) => ({ source: i.sourceEmail, destination: i.destEmail })),
+        // The validated PowerShell command is supplied by the operator workflow;
+        // here we pass the intent and let the agent run its New-MigrationBatch.
+        script: '',
+      });
+      addLog(`Agent: job ${jobId} accepted. Streaming log ...`, 'info');
+      const job = await trackJob(jobId, (l) => addLog(`Agent» ${l.text}`, l.level === 'err' ? 'err' : l.level === 'ok' ? 'ok' : 'info'));
+      addLog(`Agent: job ${job.status}.`, job.status === 'completed' ? 'ok' : 'err');
+    } catch (e) {
+      addLog(`Agent migration error: ${e instanceof Error ? e.message : e}`, 'err');
+    }
+  };
 
   const project = projects.find((p) => p.id === projectId) ?? null;
   const state = states[projectId] ?? emptyState();
@@ -237,7 +281,29 @@ export default function MigrationConsole() {
 
   return (
     <div>
-      <PageHeader title="Migration Console" subtitle="MigrationWiz-style operations: endpoints, line items, verify → assessment → pre-stage → full → delta passes, retry handling, live log and statistics export. Simulation/rehearsal engine — deterministic per mailbox; BitTitan API key in Settings is the hook for live backend execution." icon={<MonitorPlay size={20} />} />
+      <PageHeader title="Migration Console" subtitle="Endpoints, line items, verify → assessment → pre-stage → full → delta passes, retry handling, live log and statistics export. Connect the Migration Agent for real execution; without it the engine runs as a deterministic rehearsal." icon={<MonitorPlay size={20} />} />
+
+      {/* Agent status banner */}
+      <Card className={`mb-5 p-4 ${hasAgent && agentOk ? 'border-emerald-300 dark:border-emerald-700' : hasAgent && agentOk === false ? 'border-red-300 dark:border-red-700' : 'border-violet-200 dark:border-violet-800'}`}>
+        <div className="flex flex-wrap items-center gap-3">
+          <span className={`rounded-lg p-2 ${hasAgent && agentOk ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600' : 'bg-violet-100 dark:bg-violet-900/40 text-violet-600'}`}><Cpu size={18} /></span>
+          <div className="flex-1 min-w-64">
+            {!hasAgent ? (
+              <><div className="text-sm font-semibold text-slate-800 dark:text-slate-100">Migration Agent not connected — rehearsal mode</div>
+              <div className="text-xs text-slate-500 dark:text-slate-400">Passes simulate deterministically. Connect the agent in <Link to="/settings" className="text-blue-500 hover:underline">Settings → Integrations</Link> for real execution against AD / Exchange / Graph.</div></>
+            ) : agentOk === null ? (
+              <div className="text-sm text-slate-500">Checking agent …</div>
+            ) : agentOk ? (
+              <><div className="flex items-center gap-2 text-sm font-semibold text-emerald-700 dark:text-emerald-300"><CheckCircle2 size={15} /> Agent connected — REAL execution enabled</div>
+              <div className="text-xs text-slate-500 dark:text-slate-400">{agentInfo?.name} v{agentInfo?.version} on {agentInfo?.host} · PowerShell {agentInfo?.capabilities.powershell ? '✓' : '✗'} · Graph {agentInfo?.capabilities.graph ? '✓' : '✗'} · modules: {agentInfo?.capabilities.modules.join(', ') || '—'}</div></>
+            ) : (
+              <><div className="flex items-center gap-2 text-sm font-semibold text-red-600 dark:text-red-400"><XCircle size={15} /> Agent unreachable</div>
+              <div className="text-xs text-slate-500 dark:text-slate-400">Check the agent URL/key in Settings and that the agent service is running.</div></>
+            )}
+          </div>
+          <Badge color={hasAgent && agentOk ? 'green' : 'purple'}>{hasAgent && agentOk ? 'LIVE' : 'REHEARSAL'}</Badge>
+        </div>
+      </Card>
 
       {/* Project picker */}
       <Card className="mb-5 p-4">
@@ -285,7 +351,7 @@ export default function MigrationConsole() {
                   </div>
                 ))}
               </div>
-              <div className="mt-3"><Button variant="secondary" onClick={verifyEndpoints}><ShieldCheck size={15} /> Verify endpoint credentials</Button></div>
+              <div className="mt-3"><Button variant="secondary" onClick={hasAgent && agentOk ? verifyViaAgent : verifyEndpoints}><ShieldCheck size={15} /> Verify endpoint credentials{hasAgent && agentOk ? ' (agent)' : ''}</Button></div>
             </Section>
           </Card>
 
@@ -300,7 +366,7 @@ export default function MigrationConsole() {
                 <Button variant="secondary" onClick={() => startPass('verify')} disabled={!!running}><ShieldCheck size={15} /> Verify credentials</Button>
                 <Button variant="secondary" onClick={() => startPass('assessment')} disabled={!!running}><Gauge size={15} /> Run assessment</Button>
                 <Button onClick={() => startPass('prestage')} disabled={!!running}><Layers size={15} /> Pre-stage migration</Button>
-                <Button onClick={() => startPass('full')} disabled={!!running}><PlayCircle size={15} /> Full migration</Button>
+                <Button onClick={() => (hasAgent && agentOk ? fullMigrateViaAgent() : startPass('full'))} disabled={!!running}><PlayCircle size={15} /> Full migration{hasAgent && agentOk ? ' (agent)' : ''}</Button>
                 <Button variant="secondary" onClick={() => startPass('delta')} disabled={!!running}><Zap size={15} /> Final delta</Button>
                 <Button variant="danger" onClick={() => startPass('retry')} disabled={!!running}><RotateCcw size={15} /> Retry errors</Button>
                 <Button variant="secondary" onClick={exportCsv} disabled={!items.length}><Download size={15} /> Export report</Button>
