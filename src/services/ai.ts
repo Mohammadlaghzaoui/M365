@@ -55,6 +55,9 @@ export async function chat(messages: ChatMessage[], settingsOverride?: AISetting
     body: JSON.stringify({
       model: s.model || (s.provider === 'openrouter' ? 'anthropic/claude-sonnet-4.5' : 'gpt-4o-mini'),
       temperature: s.temperature,
+      // Cap the response size: without this, providers reserve the model's full
+      // output window (e.g. 64k tokens) which fails on small prepaid balances (402).
+      max_tokens: 2000,
       messages: [{ role: 'system', content: s.systemPrompt }, ...messages],
     }),
   });
