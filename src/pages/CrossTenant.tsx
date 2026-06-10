@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { ArrowLeftRight, AlertTriangle, CheckCircle2, XCircle, AlertCircle, PlayCircle, Rocket, Sparkles, Loader2 } from 'lucide-react';
+import { PSConsole, buildConsoleScript, ConsoleLine } from '../components/PSConsole';
 import { Badge, Button, Card, CodeBlock, Field, PageHeader, Section, TextArea, TextOutput } from '../components/ui';
 import { CT_DEFAULTS, CTForm, ctAdminConsentUrl, ctErrors, ctPostMigration, ctRollbackNotes, ctScripts, ctSourceSteps, ctTargetSteps, ctValidationChecklist, ctWarnings } from '../data/crossTenant';
 import { runValidation, RunResult, buildRunbook, aiAnalysisPrompt } from '../services/migrationRunner';
@@ -19,6 +20,8 @@ export default function CrossTenant() {
   const [prodUnlocked, setProdUnlocked] = useState(false);
   const [prodConfirmed, setProdConfirmed] = useState(false);
   const [selectedError, setSelectedError] = useState(ctErrors[0].id);
+  const [consoleLines, setConsoleLines] = useState<ConsoleLine[] | null>(null);
+  const pendingResult = useRef<RunResult | null>(null);
 
   const set = (k: keyof CTForm, v: string) => setForm((f) => ({ ...f, [k]: v }));
   const scripts = ctScripts(form);
@@ -26,10 +29,33 @@ export default function CrossTenant() {
 
   const runTest = () => {
     const r = runValidation(form, 'test');
-    setResult(r);
-    setProdUnlocked(r.passed);
+    pendingResult.current = r;
+    setResult(null);
+    setProdUnlocked(false);
     setProdConfirmed(false);
     setAiReply('');
+    setConsoleLines(buildConsoleScript({
+      command: `Start-WorkPilotMigrationTest -Type CrossTenant -TargetDeliveryDomain "${form.targetDeliveryDomain}" -Mode Test`,
+      connectLines: [
+        `Connecting to Exchange Online — target tenant ${form.targetOnMicrosoft} ...`,
+        'Authentication successful. Session established in TEST MODE — no changes will be made.',
+        `Loading migration endpoint "${form.endpointName}" ...`,
+        `Resolving organization relationship "${form.orgRelationshipName}" ...`,
+        `Reading migration scope group "${form.scopeGroupName}" from source tenant ...`,
+        `Parsing batch CSV (${form.csvUsers.split('\n').filter((l) => l.trim() && !/^EmailAddress$/i.test(l.trim())).length} users) ...`,
+      ],
+      checks: r.configChecks,
+      users: r.userChecks,
+      summary: r.summary,
+      passed: r.passed,
+    }));
+  };
+
+  const onConsoleDone = () => {
+    const r = pendingResult.current;
+    if (!r) return;
+    setResult(r);
+    setProdUnlocked(r.passed);
   };
 
   const askAI = async () => {
@@ -104,6 +130,10 @@ export default function CrossTenant() {
               <Button variant="ai" onClick={runTest}><PlayCircle size={16} /> Run test migration</Button>
             </div>
           </Card>
+
+          {consoleLines && (
+            <PSConsole lines={consoleLines} onDone={onConsoleDone} title={`Windows PowerShell — Cross-Tenant Migration Runner (${result ? 'completed' : 'running'})`} />
+          )}
 
           {result && (
             <>

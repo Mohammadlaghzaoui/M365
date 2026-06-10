@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Server, PlayCircle, CheckCircle2, XCircle, AlertCircle, AlertTriangle } from 'lucide-react';
 import { Button, Card, CodeBlock, Field, PageHeader, Section, TextArea } from '../components/ui';
 import { useLocalStorage } from '../store/useLocalStorage';
 import { AIHelper } from '../components/AIHelper';
+import { PSConsole, buildConsoleScript, ConsoleLine } from '../components/PSConsole';
 
 /**
  * Hybrid / On-Premises migration connector assistant.
@@ -89,8 +90,31 @@ const prereqs = [
 export default function Hybrid() {
   const [form, setForm] = useLocalStorage<HybridForm>('hybrid-form', DEFAULTS);
   const [checks, setChecks] = useState<Check[] | null>(null);
+  const [consoleLines, setConsoleLines] = useState<ConsoleLine[] | null>(null);
+  const pendingChecks = useRef<Check[] | null>(null);
   const set = <K extends keyof HybridForm>(k: K, v: string) => setForm((f) => ({ ...f, [k]: v }));
   const passed = checks?.every((c) => c.status !== 'failed') ?? false;
+
+  const runValidation = () => {
+    const result = validate(form);
+    pendingChecks.current = result;
+    setChecks(null);
+    const failed = result.filter((c) => c.status === 'failed').length;
+    setConsoleLines(buildConsoleScript({
+      command: `Test-WorkPilotHybridEndpoint -RemoteServer ${form.onPremFqdn} -Endpoint "${form.endpointName}" -Mode Test`,
+      connectLines: [
+        `Resolving ${form.onPremFqdn} ...`,
+        `Probing https://${form.onPremFqdn}/EWS/mrsproxy.svc (simulated — run Test-MigrationServerAvailability for the live check) ...`,
+        `Loading endpoint configuration "${form.endpointName}" ...`,
+        `Verifying target delivery domain ${form.targetDeliveryDomain} ...`,
+      ],
+      checks: result,
+      summary: failed === 0
+        ? `VALIDATION PASSED — configuration consistent. Runbook below is ready for the live Test-MigrationServerAvailability.`
+        : `VALIDATION FAILED — ${failed} blocking issue(s). Fix and re-run.`,
+      passed: failed === 0,
+    }));
+  };
 
   const icon = (s: string) =>
     s === 'passed' ? <CheckCircle2 size={16} className="shrink-0 text-emerald-500" />
@@ -114,10 +138,16 @@ export default function Hybrid() {
             <TextArea label="User CSV (on-prem primary SMTP — header EmailAddress)" value={form.csvUsers} onChange={(v) => set('csvUsers', v)} rows={4} />
           </div>
           <div className="mt-4">
-            <Button variant="ai" onClick={() => setChecks(validate(form))}><PlayCircle size={16} /> Validate configuration (test mode)</Button>
+            <Button variant="ai" onClick={runValidation}><PlayCircle size={16} /> Validate configuration (test mode)</Button>
           </div>
         </Section>
       </Card>
+
+      {consoleLines && (
+        <div className="mb-5">
+          <PSConsole lines={consoleLines} onDone={() => setChecks(pendingChecks.current)} title="Windows PowerShell — Hybrid Endpoint Validator" />
+        </div>
+      )}
 
       {checks && (
         <Card className={`p-5 mb-5 ${passed ? 'border-emerald-300 dark:border-emerald-700' : 'border-red-300 dark:border-red-700'}`}>

@@ -1,172 +1,169 @@
-import { useEffect, useState } from 'react';
-import { Settings as SettingsIcon, Plug, Loader2, CheckCircle2, XCircle, Trash2, KeyRound, Workflow, LogIn, LogOut } from 'lucide-react';
-import { Button, Card, Field, PageHeader, Section, Select, TextArea } from '../components/ui';
+import { useEffect, useRef, useState } from 'react';
+import {
+  Settings as SettingsIcon, Plug, Loader2, CheckCircle2, XCircle, Trash2, LogIn, LogOut,
+  Sparkles, KeyRound, Blocks, Palette, Database, Download, Upload, UserPlus, Users,
+} from 'lucide-react';
+import { Button, Card, Field, PageHeader, Section, Select, TextArea, Badge } from '../components/ui';
 import { AISettings, AIProvider, SSOSettings, ServiceNowSettings } from '../types';
-import { DEFAULT_AI_SETTINGS, DEFAULT_SYSTEM_PROMPT, getAISettings, saveAISettings, getSSOSettings, saveSSOSettings, getServiceNowSettings, saveServiceNowSettings } from '../store/settings';
+import {
+  DEFAULT_SYSTEM_PROMPT, getAISettings, saveAISettings, getSSOSettings, saveSSOSettings,
+  getServiceNowSettings, saveServiceNowSettings, getBranding, saveBranding, BrandingSettings,
+  getIntegrations, saveIntegrations, IntegrationSettings,
+} from '../store/settings';
 import { testConnection } from '../services/ai';
 import { signIn, signOut, currentAccount } from '../services/sso';
 import { testServiceNow } from '../services/servicenow';
+import { testJira, testZendesk, testTeamsWebhook, testSlackWebhook } from '../services/integrations';
+import { addUser, changePassword, getSession, listUsers, removeUser } from '../services/auth';
+import { load, save } from '../store/useLocalStorage';
 
+type Tab = 'ai' | 'sso' | 'integrations' | 'branding' | 'account' | 'data';
+
+const tabs: { id: Tab; label: string; icon: typeof Sparkles }[] = [
+  { id: 'ai', label: 'AI Provider', icon: Sparkles },
+  { id: 'sso', label: 'Microsoft SSO', icon: KeyRound },
+  { id: 'integrations', label: 'Integrations', icon: Blocks },
+  { id: 'branding', label: 'Branding', icon: Palette },
+  { id: 'account', label: 'Account & Users', icon: Users },
+  { id: 'data', label: 'Data', icon: Database },
+];
+
+function TestBadge({ state, msg }: { state: 'idle' | 'testing' | 'ok' | 'fail'; msg: string }) {
+  return (
+    <>
+      {state === 'ok' && <span className="flex items-center gap-1.5 text-sm text-emerald-600"><CheckCircle2 size={15} /> Connected</span>}
+      {state === 'fail' && <span className="flex items-center gap-1.5 text-sm text-red-500"><XCircle size={15} /> Failed</span>}
+      {msg && <p className={`w-full text-xs ${state === 'ok' ? 'text-emerald-600' : 'text-red-500'}`}>{msg}</p>}
+    </>
+  );
+}
+
+function useTest(fn: () => Promise<string>) {
+  const [state, setState] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle');
+  const [msg, setMsg] = useState('');
+  const run = async () => {
+    setState('testing');
+    setMsg('');
+    try {
+      setMsg(await fn());
+      setState('ok');
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e));
+      setState('fail');
+    }
+  };
+  return { state, msg, run };
+}
+
+export default function Settings() {
+  const [tab, setTab] = useState<Tab>('ai');
+
+  return (
+    <div className="max-w-4xl">
+      <PageHeader title="Settings" subtitle="AI provider, Microsoft SSO, PSA/ITSM integrations, branding, users and data management." icon={<SettingsIcon size={20} />} />
+      <div className="mb-5 flex flex-wrap gap-2">
+        {tabs.map((t) => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold ${tab === t.id ? 'bg-blue-600 text-white' : 'border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'}`}>
+            <t.icon size={15} /> {t.label}
+          </button>
+        ))}
+      </div>
+      {tab === 'ai' && <AICard />}
+      {tab === 'sso' && <SSOCard />}
+      {tab === 'integrations' && <IntegrationsTab />}
+      {tab === 'branding' && <BrandingCard />}
+      {tab === 'account' && <AccountCard />}
+      {tab === 'data' && <DataCard />}
+    </div>
+  );
+}
+
+// ---------------- AI ----------------
 const providerInfo: Record<AIProvider, { label: string; modelHint: string; keyHint: string }> = {
-  openrouter: { label: 'OpenRouter (recommended first)', modelHint: 'e.g. anthropic/claude-sonnet-4.5, openai/gpt-4o, meta-llama/llama-3.3-70b-instruct', keyHint: 'sk-or-v1-… (openrouter.ai/keys)' },
+  openrouter: { label: 'OpenRouter (recommended first)', modelHint: 'e.g. anthropic/claude-sonnet-4.5, openai/gpt-4o, or a :free model', keyHint: 'sk-or-v1-… (openrouter.ai/keys)' },
   openai: { label: 'OpenAI API', modelHint: 'e.g. gpt-4o, gpt-4o-mini', keyHint: 'sk-… (platform.openai.com)' },
   claude: { label: 'Claude API (Anthropic)', modelHint: 'e.g. claude-sonnet-4-5, claude-haiku-4-5', keyHint: 'sk-ant-… (console.anthropic.com)' },
   disabled: { label: 'Disabled (templates only)', modelHint: '', keyHint: '' },
 };
 
-export default function Settings() {
+function AICard() {
   const [s, setS] = useState<AISettings>(getAISettings());
-  const [testState, setTestState] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle');
-  const [testMsg, setTestMsg] = useState('');
   const [saved, setSaved] = useState(false);
+  const t = useTest(async () => `Model replied: "${(await testConnection(s)).slice(0, 120)}"`);
 
-  const set = <K extends keyof AISettings>(k: K, v: AISettings[K]) => {
-    setS((prev) => ({ ...prev, [k]: v }));
-    setSaved(false);
-  };
-
-  const save = () => {
-    saveAISettings(s);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  };
-
-  const test = async () => {
-    saveAISettings(s);
-    setTestState('testing');
-    setTestMsg('');
-    try {
-      const reply = await testConnection(s);
-      setTestState('ok');
-      setTestMsg(`Model replied: "${reply.slice(0, 120)}"`);
-    } catch (e) {
-      setTestState('fail');
-      setTestMsg(e instanceof Error ? e.message : String(e));
-    }
-  };
-
-  const clearData = () => {
-    if (confirm('Clear ALL local portal data (tickets, projects, notes, KB customs, settings)? This cannot be undone.')) {
-      Object.keys(localStorage).filter((k) => k.startsWith('workpilot:')).forEach((k) => localStorage.removeItem(k));
-      location.reload();
-    }
-  };
-
+  const set = <K extends keyof AISettings>(k: K, v: AISettings[K]) => { setS((p) => ({ ...p, [k]: v })); setSaved(false); };
+  const doSave = () => { saveAISettings(s); setSaved(true); setTimeout(() => setSaved(false), 2000); };
   const info = providerInfo[s.provider];
 
   return (
-    <div className="max-w-3xl">
-      <PageHeader title="Settings" subtitle="AI provider configuration and local data management. Keys are stored only in your browser's localStorage." icon={<SettingsIcon size={20} />} />
-
-      <Card className="p-5 space-y-4">
-        <Section title="AI provider">
-          <Select label="Provider" value={s.provider} onChange={(v) => set('provider', v as AIProvider)}
-            options={(Object.keys(providerInfo) as AIProvider[]).map((p) => ({ value: p, label: providerInfo[p].label }))} />
-          <p className="mt-2 text-xs text-slate-400">
-            Switching provider only changes the endpoint and auth header — your prompts and workflows stay identical. Start with OpenRouter; move to OpenAI or Claude API by selecting it here and pasting that key.
-          </p>
-        </Section>
-
+    <Card className="p-5 space-y-4">
+      <Section title="AI provider">
+        <Select label="Provider" value={s.provider} onChange={(v) => set('provider', v as AIProvider)}
+          options={(Object.keys(providerInfo) as AIProvider[]).map((p) => ({ value: p, label: providerInfo[p].label }))} />
+        <p className="mt-2 text-xs text-slate-400">Switching provider only changes endpoint + auth header. Start with OpenRouter; move to OpenAI or Claude by selecting it and pasting that key.</p>
+      </Section>
+      {s.provider !== 'disabled' && (
+        <>
+          <Field label={`API key ${info.keyHint && `(${info.keyHint})`}`} type="password" value={s.apiKey} onChange={(v) => set('apiKey', v)} placeholder="Paste your API key" />
+          <Field label={`Model name ${info.modelHint && `— ${info.modelHint}`}`} value={s.model} onChange={(v) => set('model', v)} />
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Temperature: {s.temperature.toFixed(1)} (lower = more precise)</span>
+            <input type="range" min={0} max={1} step={0.1} value={s.temperature} onChange={(e) => set('temperature', Number(e.target.value))} className="w-full accent-violet-600" />
+          </label>
+          <TextArea label="System prompt" value={s.systemPrompt} onChange={(v) => set('systemPrompt', v)} rows={6} />
+          <button onClick={() => set('systemPrompt', DEFAULT_SYSTEM_PROMPT)} className="text-xs font-semibold text-blue-500 hover:underline">Reset to default system prompt</button>
+        </>
+      )}
+      <div className="flex flex-wrap items-center gap-3 border-t border-slate-200 dark:border-slate-700 pt-4">
+        <Button onClick={doSave}>{saved ? 'Saved ✓' : 'Save settings'}</Button>
         {s.provider !== 'disabled' && (
-          <>
-            <Field label={`API key ${info.keyHint && `(${info.keyHint})`}`} type="password" value={s.apiKey} onChange={(v) => set('apiKey', v)} placeholder="Paste your API key" />
-            <Field label={`Model name ${info.modelHint && `— ${info.modelHint}`}`} value={s.model} onChange={(v) => set('model', v)} />
-            <label className="block">
-              <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Temperature: {s.temperature.toFixed(1)} (lower = more precise)</span>
-              <input type="range" min={0} max={1} step={0.1} value={s.temperature} onChange={(e) => set('temperature', Number(e.target.value))} className="w-full accent-violet-600" />
-            </label>
-            <TextArea label="System prompt" value={s.systemPrompt} onChange={(v) => set('systemPrompt', v)} rows={6} />
-            <button onClick={() => set('systemPrompt', DEFAULT_SYSTEM_PROMPT)} className="text-xs font-semibold text-blue-500 hover:underline">Reset to default system prompt</button>
-          </>
+          <Button variant="ai" onClick={() => { saveAISettings(s); t.run(); }} disabled={t.state === 'testing' || !s.apiKey}>
+            {t.state === 'testing' ? <Loader2 size={16} className="animate-spin" /> : <Plug size={16} />} Test AI connection
+          </Button>
         )}
-
-        <div className="flex flex-wrap items-center gap-3 border-t border-slate-200 dark:border-slate-700 pt-4">
-          <Button onClick={save}>{saved ? 'Saved ✓' : 'Save settings'}</Button>
-          {s.provider !== 'disabled' && (
-            <Button variant="ai" onClick={test} disabled={testState === 'testing' || !s.apiKey}>
-              {testState === 'testing' ? <Loader2 size={16} className="animate-spin" /> : <Plug size={16} />} Test AI connection
-            </Button>
-          )}
-          {testState === 'ok' && <span className="flex items-center gap-1.5 text-sm text-emerald-600"><CheckCircle2 size={16} /> Connected</span>}
-          {testState === 'fail' && <span className="flex items-center gap-1.5 text-sm text-red-500"><XCircle size={16} /> Failed</span>}
-        </div>
-        {testMsg && <p className={`text-xs ${testState === 'ok' ? 'text-emerald-600' : 'text-red-500'}`}>{testMsg}</p>}
-        {s.provider === 'claude' && (
-          <p className="text-xs text-amber-600 dark:text-amber-400">Note: the Claude API is called directly from the browser (CORS-enabled via the anthropic-dangerous-direct-browser-access header). For production team use, route keys through a small backend proxy instead of the browser.</p>
-        )}
-      </Card>
-
-      <SSOCard />
-      <ServiceNowCard />
-
-      <Card className="mt-5 p-5">
-        <Section title="Local data">
-          <p className="mb-3 text-sm text-slate-500 dark:text-slate-400">
-            All portal data (tickets, migration projects, notes, KB articles, security status, settings) lives in your browser's localStorage under the <code className="rounded bg-slate-100 dark:bg-slate-700 px-1">workpilot:</code> prefix. The storage layer is a single module (src/store) so it can be swapped for SQLite/PostgreSQL later without touching the pages.
-          </p>
-          <Button variant="danger" onClick={clearData}><Trash2 size={15} /> Clear all local data</Button>
-        </Section>
-      </Card>
-    </div>
+        <TestBadge state={t.state} msg={t.msg} />
+      </div>
+    </Card>
   );
 }
 
+// ---------------- SSO ----------------
 function SSOCard() {
   const [s, setS] = useState<SSOSettings>(getSSOSettings());
   const [account, setAccount] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
 
-  useEffect(() => {
-    currentAccount().then((a) => setAccount(a ? `${a.name ?? a.username}` : null));
-  }, []);
-
-  const set = <K extends keyof SSOSettings>(k: K, v: SSOSettings[K]) => {
-    const next = { ...s, [k]: v };
-    setS(next);
-    saveSSOSettings(next);
-  };
+  useEffect(() => { currentAccount().then((a) => setAccount(a ? `${a.name ?? a.username}` : null)); }, []);
+  const set = <K extends keyof SSOSettings>(k: K, v: SSOSettings[K]) => { const next = { ...s, [k]: v }; setS(next); saveSSOSettings(next); };
 
   const doSignIn = async () => {
-    setBusy(true);
-    setMsg('');
-    try {
-      const a = await signIn();
-      setAccount(a.name ?? a.username);
-      setMsg(`Signed in as ${a.username}`);
-    } catch (e) {
-      setMsg(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
+    setBusy(true); setMsg('');
+    try { const a = await signIn(); setAccount(a.name ?? a.username); setMsg(`Signed in as ${a.username}`); }
+    catch (e) { setMsg(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
   };
-
   const doSignOut = async () => {
     setBusy(true);
-    try {
-      await signOut();
-      setAccount(null);
-      setMsg('Signed out.');
-    } catch (e) {
-      setMsg(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
+    try { await signOut(); setAccount(null); setMsg('Signed out.'); }
+    catch (e) { setMsg(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
   };
 
   return (
-    <Card className="mt-5 p-5 space-y-3">
+    <Card className="p-5 space-y-3">
       <Section title="Microsoft 365 SSO (Entra ID)">
         <label className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
           <input type="checkbox" checked={s.enabled} onChange={(e) => set('enabled', e.target.checked)} className="h-4 w-4 rounded border-slate-300 text-blue-600" />
-          Enable Sign in with Microsoft
+          Enable Sign in with Microsoft (also shown on the login page)
         </label>
         {s.enabled && (
           <div className="mt-3 space-y-3">
             <Field label="Directory (tenant) ID" value={s.tenantId} onChange={(v) => set('tenantId', v)} placeholder="xxxxxxxx-xxxx-..." />
             <Field label="Application (client) ID" value={s.clientId} onChange={(v) => set('clientId', v)} placeholder="SPA app registration in your tenant" />
             <p className="text-xs text-slate-400">
-              One-time setup: Entra admin center → App registrations → New → platform <strong>Single-page application</strong> with redirect URI = this portal's exact URL → copy tenant ID + client ID here.
+              Setup: Entra admin center → App registrations → New → platform <strong>Single-page application</strong> with redirect URI = this portal's exact URL (e.g. https://sorrento.cloud/). Copy tenant + client ID here.
             </p>
             <div className="flex items-center gap-3">
               {account ? (
@@ -188,57 +185,303 @@ function SSOCard() {
   );
 }
 
-function ServiceNowCard() {
-  const [s, setS] = useState<ServiceNowSettings>(getServiceNowSettings());
-  const [state, setState] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle');
-  const [msg, setMsg] = useState('');
+// ---------------- Integrations ----------------
+function IntegrationsTab() {
+  const [sn, setSn] = useState<ServiceNowSettings>(getServiceNowSettings());
+  const [intg, setIntg] = useState<IntegrationSettings>(getIntegrations());
+  const snTest = useTest(testServiceNow);
+  const jiraTest = useTest(testJira);
+  const zdTest = useTest(testZendesk);
+  const teamsTest = useTest(testTeamsWebhook);
+  const slackTest = useTest(testSlackWebhook);
 
-  const set = <K extends keyof ServiceNowSettings>(k: K, v: ServiceNowSettings[K]) => {
-    const next = { ...s, [k]: v };
-    setS(next);
-    saveServiceNowSettings(next);
+  const setSnField = <K extends keyof ServiceNowSettings>(k: K, v: ServiceNowSettings[K]) => { const next = { ...sn, [k]: v }; setSn(next); saveServiceNowSettings(next); };
+  const setI = <S extends keyof IntegrationSettings>(section: S, patch: Partial<IntegrationSettings[S]>) => {
+    const next = { ...intg, [section]: { ...intg[section], ...patch } };
+    setIntg(next);
+    saveIntegrations(next);
   };
 
-  const test = async () => {
-    setState('testing');
+  return (
+    <div className="space-y-5">
+      {/* ServiceNow */}
+      <Card className="p-5 space-y-3">
+        <Section title="ServiceNow (ITSM)">
+          <label className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
+            <input type="checkbox" checked={sn.enabled} onChange={(e) => setSnField('enabled', e.target.checked)} className="h-4 w-4 rounded border-slate-300 text-blue-600" />
+            Enable — creates incidents straight from the Ticket Assistant
+          </label>
+          {sn.enabled && (
+            <div className="mt-3 space-y-3">
+              <Field label="Instance URL" value={sn.instanceUrl} onChange={(v) => setSnField('instanceUrl', v)} placeholder="https://yourinstance.service-now.com" />
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Username" value={sn.username} onChange={(v) => setSnField('username', v)} />
+                <Field label="Password" type="password" value={sn.password} onChange={(v) => setSnField('password', v)} />
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <Button variant="ai" onClick={snTest.run} disabled={snTest.state === 'testing' || !sn.instanceUrl}>
+                  {snTest.state === 'testing' ? <Loader2 size={15} className="animate-spin" /> : <Plug size={15} />} Test connection
+                </Button>
+                <TestBadge state={snTest.state} msg={snTest.msg} />
+              </div>
+              <p className="text-xs text-amber-600 dark:text-amber-400">Instance needs a CORS rule for this portal's origin (System Web Services → REST → CORS Rules, Table API, GET/POST/PATCH).</p>
+            </div>
+          )}
+        </Section>
+      </Card>
+
+      {/* Jira */}
+      <Card className="p-5 space-y-3">
+        <Section title="Jira Service Management">
+          <label className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
+            <input type="checkbox" checked={intg.jira.enabled} onChange={(e) => setI('jira', { enabled: e.target.checked })} className="h-4 w-4 rounded border-slate-300 text-blue-600" />
+            Enable Jira integration
+          </label>
+          {intg.jira.enabled && (
+            <div className="mt-3 space-y-3">
+              <Field label="Base URL" value={intg.jira.baseUrl} onChange={(v) => setI('jira', { baseUrl: v })} placeholder="https://yourcompany.atlassian.net" />
+              <div className="grid grid-cols-3 gap-3">
+                <Field label="Account email" value={intg.jira.email} onChange={(v) => setI('jira', { email: v })} />
+                <Field label="API token" type="password" value={intg.jira.apiToken} onChange={(v) => setI('jira', { apiToken: v })} />
+                <Field label="Project key" value={intg.jira.projectKey} onChange={(v) => setI('jira', { projectKey: v })} placeholder="ITSM" />
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <Button variant="ai" onClick={jiraTest.run} disabled={jiraTest.state === 'testing'}>
+                  {jiraTest.state === 'testing' ? <Loader2 size={15} className="animate-spin" /> : <Plug size={15} />} Test connection
+                </Button>
+                <TestBadge state={jiraTest.state} msg={jiraTest.msg} />
+              </div>
+            </div>
+          )}
+        </Section>
+      </Card>
+
+      {/* Zendesk */}
+      <Card className="p-5 space-y-3">
+        <Section title="Zendesk">
+          <label className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
+            <input type="checkbox" checked={intg.zendesk.enabled} onChange={(e) => setI('zendesk', { enabled: e.target.checked })} className="h-4 w-4 rounded border-slate-300 text-blue-600" />
+            Enable Zendesk integration
+          </label>
+          {intg.zendesk.enabled && (
+            <div className="mt-3 space-y-3">
+              <div className="grid grid-cols-3 gap-3">
+                <Field label="Subdomain" value={intg.zendesk.subdomain} onChange={(v) => setI('zendesk', { subdomain: v })} placeholder="yourcompany" />
+                <Field label="Agent email" value={intg.zendesk.email} onChange={(v) => setI('zendesk', { email: v })} />
+                <Field label="API token" type="password" value={intg.zendesk.apiToken} onChange={(v) => setI('zendesk', { apiToken: v })} />
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <Button variant="ai" onClick={zdTest.run} disabled={zdTest.state === 'testing'}>
+                  {zdTest.state === 'testing' ? <Loader2 size={15} className="animate-spin" /> : <Plug size={15} />} Test connection
+                </Button>
+                <TestBadge state={zdTest.state} msg={zdTest.msg} />
+              </div>
+            </div>
+          )}
+        </Section>
+      </Card>
+
+      {/* Teams & Slack webhooks */}
+      <Card className="p-5 space-y-3">
+        <Section title="Notifications — Microsoft Teams & Slack webhooks">
+          <label className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
+            <input type="checkbox" checked={intg.teamsWebhook.enabled} onChange={(e) => setI('teamsWebhook', { enabled: e.target.checked })} className="h-4 w-4 rounded border-slate-300 text-blue-600" />
+            Microsoft Teams incoming webhook
+          </label>
+          {intg.teamsWebhook.enabled && (
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="min-w-72 flex-1"><Field label="Webhook URL (Teams channel → Workflows/Connectors)" value={intg.teamsWebhook.url} onChange={(v) => setI('teamsWebhook', { url: v })} placeholder="https://..." /></div>
+              <Button variant="ai" onClick={teamsTest.run} disabled={teamsTest.state === 'testing'}>
+                {teamsTest.state === 'testing' ? <Loader2 size={15} className="animate-spin" /> : <Plug size={15} />} Send test
+              </Button>
+              <TestBadge state={teamsTest.state} msg={teamsTest.msg} />
+            </div>
+          )}
+          <label className="mt-3 flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
+            <input type="checkbox" checked={intg.slackWebhook.enabled} onChange={(e) => setI('slackWebhook', { enabled: e.target.checked })} className="h-4 w-4 rounded border-slate-300 text-blue-600" />
+            Slack incoming webhook
+          </label>
+          {intg.slackWebhook.enabled && (
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="min-w-72 flex-1"><Field label="Webhook URL" value={intg.slackWebhook.url} onChange={(v) => setI('slackWebhook', { url: v })} placeholder="https://hooks.slack.com/services/..." /></div>
+              <Button variant="ai" onClick={slackTest.run} disabled={slackTest.state === 'testing'}>
+                {slackTest.state === 'testing' ? <Loader2 size={15} className="animate-spin" /> : <Plug size={15} />} Send test
+              </Button>
+              <TestBadge state={slackTest.state} msg={slackTest.msg} />
+            </div>
+          )}
+        </Section>
+      </Card>
+
+      {/* BitTitan & Syskit */}
+      <Card className="p-5 space-y-3">
+        <Section title="Migration & governance tooling">
+          <label className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
+            <input type="checkbox" checked={intg.bittitan.enabled} onChange={(e) => setI('bittitan', { enabled: e.target.checked })} className="h-4 w-4 rounded border-slate-300 text-blue-600" />
+            BitTitan MigrationWiz <Badge color="purple">API key stored for backend use</Badge>
+          </label>
+          {intg.bittitan.enabled && (
+            <Field label="MigrationWiz API key" type="password" value={intg.bittitan.apiKey} onChange={(v) => setI('bittitan', { apiKey: v })} />
+          )}
+          <label className="mt-3 flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
+            <input type="checkbox" checked={intg.syskit.enabled} onChange={(e) => setI('syskit', { enabled: e.target.checked })} className="h-4 w-4 rounded border-slate-300 text-blue-600" />
+            Syskit Points
+          </label>
+          {intg.syskit.enabled && (
+            <Field label="Syskit base URL (used for deep links from the Syskit module)" value={intg.syskit.baseUrl} onChange={(v) => setI('syskit', { baseUrl: v })} placeholder="https://yourcompany.syskit365.com" />
+          )}
+        </Section>
+      </Card>
+    </div>
+  );
+}
+
+// ---------------- Branding ----------------
+function BrandingCard() {
+  const [b, setB] = useState<BrandingSettings>(getBranding());
+  const [saved, setSaved] = useState(false);
+  const set = <K extends keyof BrandingSettings>(k: K, v: BrandingSettings[K]) => { setB((p) => ({ ...p, [k]: v })); setSaved(false); };
+
+  return (
+    <Card className="p-5 space-y-3">
+      <Section title="Portal branding">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Company name" value={b.companyName} onChange={(v) => set('companyName', v)} placeholder="Sorrento Cloud" />
+          <Field label="Portal name" value={b.portalName} onChange={(v) => set('portalName', v)} placeholder="M365 WorkPilot" />
+          <Field label="Support email (signatures, login page)" value={b.supportEmail} onChange={(v) => set('supportEmail', v)} />
+          <Select label="Default output language" value={b.defaultLanguage} onChange={(v) => set('defaultLanguage', v as 'en' | 'nl')}
+            options={[{ value: 'en', label: 'English' }, { value: 'nl', label: 'Dutch (Nederlands)' }]} />
+        </div>
+        <div className="mt-4 flex items-center gap-3">
+          <Button onClick={() => { saveBranding(b); setSaved(true); setTimeout(() => location.reload(), 600); }}>{saved ? 'Saved — reloading…' : 'Save branding'}</Button>
+          <span className="text-xs text-slate-400">Shown in the sidebar, login page and generated emails.</span>
+        </div>
+      </Section>
+    </Card>
+  );
+}
+
+// ---------------- Account & users ----------------
+function AccountCard() {
+  const session = getSession();
+  const [users, setUsers] = useState<string[]>(listUsers());
+  const [cur, setCur] = useState('');
+  const [next, setNext] = useState('');
+  const [newEmail, setNewEmail] = useState('');
+  const [newPass, setNewPass] = useState('');
+  const [msg, setMsg] = useState('');
+
+  const doChange = async () => {
     setMsg('');
     try {
-      const r = await testServiceNow();
-      setState('ok');
-      setMsg(r);
-    } catch (e) {
-      setState('fail');
-      setMsg(e instanceof Error ? e.message : String(e));
+      await changePassword(session?.email ?? '', cur, next);
+      setMsg('Password changed.');
+      setCur(''); setNext('');
+    } catch (e) { setMsg(e instanceof Error ? e.message : String(e)); }
+  };
+
+  const doAdd = async () => {
+    setMsg('');
+    try {
+      await addUser(newEmail, newPass);
+      setUsers(listUsers());
+      setMsg(`User ${newEmail} added.`);
+      setNewEmail(''); setNewPass('');
+    } catch (e) { setMsg(e instanceof Error ? e.message : String(e)); }
+  };
+
+  return (
+    <div className="space-y-5">
+      <Card className="p-5">
+        <Section title={`Change password — ${session?.email ?? ''}`}>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Current password" type="password" value={cur} onChange={setCur} />
+            <Field label="New password (min 6 chars)" type="password" value={next} onChange={setNext} />
+          </div>
+          <div className="mt-3"><Button onClick={doChange} disabled={!cur || !next}>Change password</Button></div>
+        </Section>
+      </Card>
+      <Card className="p-5">
+        <Section title="Local portal users">
+          <div className="mb-3 space-y-1.5">
+            {users.map((u) => (
+              <div key={u} className="flex items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm text-slate-700 dark:text-slate-200">
+                {u}
+                {u !== session?.email && users.length > 1 && (
+                  <button onClick={() => { try { removeUser(u); setUsers(listUsers()); } catch (e) { setMsg(String(e)); } }} className="ml-auto text-slate-400 hover:text-red-500"><Trash2 size={14} /></button>
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="New user email" value={newEmail} onChange={setNewEmail} placeholder="engineer@sorrento.cloud" />
+            <Field label="Password" type="password" value={newPass} onChange={setNewPass} />
+          </div>
+          <div className="mt-3"><Button variant="secondary" onClick={doAdd} disabled={!newEmail || !newPass}><UserPlus size={15} /> Add user</Button></div>
+          {msg && <p className="mt-2 text-xs text-slate-500">{msg}</p>}
+          <p className="mt-3 text-xs text-amber-600 dark:text-amber-400">Local accounts are a usability gate in this browser-only version, not a hard security boundary — use Microsoft 365 SSO for enterprise authentication.</p>
+        </Section>
+      </Card>
+    </div>
+  );
+}
+
+// ---------------- Data ----------------
+function DataCard() {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [msg, setMsg] = useState('');
+
+  const exportData = () => {
+    const data: Record<string, unknown> = {};
+    Object.keys(localStorage).filter((k) => k.startsWith('workpilot:')).forEach((k) => {
+      try { data[k] = JSON.parse(localStorage.getItem(k) ?? 'null'); } catch { data[k] = localStorage.getItem(k); }
+    });
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `workpilot-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
+  const importData = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(String(reader.result));
+        Object.entries(data).forEach(([k, v]) => {
+          if (k.startsWith('workpilot:')) localStorage.setItem(k, JSON.stringify(v));
+        });
+        setMsg('Backup imported — reloading…');
+        setTimeout(() => location.reload(), 800);
+      } catch (e) {
+        setMsg(`Import failed: ${e instanceof Error ? e.message : e}`);
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const clearData = () => {
+    if (confirm('Clear ALL local portal data (tickets, projects, notes, settings, users)? This cannot be undone.')) {
+      Object.keys(localStorage).filter((k) => k.startsWith('workpilot:')).forEach((k) => localStorage.removeItem(k));
+      location.reload();
     }
   };
 
   return (
-    <Card className="mt-5 p-5 space-y-3">
-      <Section title="ServiceNow integration">
-        <label className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
-          <input type="checkbox" checked={s.enabled} onChange={(e) => set('enabled', e.target.checked)} className="h-4 w-4 rounded border-slate-300 text-blue-600" />
-          Enable ServiceNow (create incidents from the Ticket Assistant)
-        </label>
-        {s.enabled && (
-          <div className="mt-3 space-y-3">
-            <Field label="Instance URL" value={s.instanceUrl} onChange={(v) => set('instanceUrl', v)} placeholder="https://yourinstance.service-now.com" />
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Username" value={s.username} onChange={(v) => set('username', v)} placeholder="integration.user" />
-              <Field label="Password" type="password" value={s.password} onChange={(v) => set('password', v)} />
-            </div>
-            <div className="flex items-center gap-3">
-              <Button variant="ai" onClick={test} disabled={state === 'testing' || !s.instanceUrl}>
-                {state === 'testing' ? <Loader2 size={15} className="animate-spin" /> : <Plug size={15} />} Test ServiceNow connection
-              </Button>
-              {state === 'ok' && <span className="flex items-center gap-1.5 text-sm text-emerald-600"><CheckCircle2 size={15} /> Connected</span>}
-              {state === 'fail' && <span className="flex items-center gap-1.5 text-sm text-red-500"><XCircle size={15} /> Failed</span>}
-            </div>
-            {msg && <p className={`text-xs ${state === 'ok' ? 'text-emerald-600' : 'text-red-500'}`}>{msg}</p>}
-            <p className="text-xs text-amber-600 dark:text-amber-400">
-              CORS note: the instance must allow this portal's origin — System Web Services → REST → CORS Rules → New (Table API, methods GET/POST/PATCH). For production, route via a proxy instead of browser-stored credentials.
-            </p>
-          </div>
-        )}
+    <Card className="p-5">
+      <Section title="Local data">
+        <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">
+          All portal data lives in this browser's localStorage under the <code className="rounded bg-slate-100 dark:bg-slate-700 px-1">workpilot:</code> prefix.
+          Export a backup before switching machines or hosting; the storage layer (src/store) is a single module ready to swap for a real database.
+        </p>
+        <div className="flex flex-wrap gap-3">
+          <Button variant="secondary" onClick={exportData}><Download size={15} /> Export backup (JSON)</Button>
+          <Button variant="secondary" onClick={() => fileRef.current?.click()}><Upload size={15} /> Import backup</Button>
+          <Button variant="danger" onClick={clearData}><Trash2 size={15} /> Clear all local data</Button>
+          <input ref={fileRef} type="file" accept="application/json" className="hidden" onChange={(e) => e.target.files?.[0] && importData(e.target.files[0])} />
+        </div>
+        {msg && <p className="mt-3 text-xs text-slate-500">{msg}</p>}
       </Section>
     </Card>
   );

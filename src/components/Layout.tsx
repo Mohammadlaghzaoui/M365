@@ -6,8 +6,9 @@ import {
   ShieldCheck, StickyNote, Sun, Terminal, Ticket, Users, Workflow as WorkflowIcon, X, FolderKanban, Send,
 } from 'lucide-react';
 import { load, save } from '../store/useLocalStorage';
-import { currentAccount } from '../services/sso';
-import { UserCircle2 } from 'lucide-react';
+import { getBranding } from '../store/settings';
+import { Session, logout } from '../services/auth';
+import { UserCircle2, LogOut } from 'lucide-react';
 
 export const NAV = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, group: 'Overview' },
@@ -35,16 +36,12 @@ export const NAV = [
 
 const GROUPS = ['Overview', 'Helpdesk', 'Migration', 'Operations', 'Tools', 'Reference'];
 
-export function Layout() {
+export function Layout({ session, onLogout }: { session: Session; onLogout: () => void }) {
   const [dark, setDark] = useState(() => load('dark-mode', window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false));
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const [account, setAccount] = useState<string | null>(null);
+  const branding = getBranding();
   const navigate = useNavigate();
-
-  useEffect(() => {
-    currentAccount().then((a) => setAccount(a ? (a.name ?? a.username) : null)).catch(() => {});
-  }, []);
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', dark);
@@ -67,8 +64,8 @@ export function Layout() {
             <div className="rounded-sm bg-[#00a4ef]" /><div className="rounded-sm bg-[#ffb900]" />
           </div>
           <div>
-            <div className="text-sm font-bold text-slate-800 dark:text-slate-100 leading-tight">M365 WorkPilot</div>
-            <div className="text-[10px] text-slate-400 leading-tight">Service Provider Portal</div>
+            <div className="text-sm font-bold text-slate-800 dark:text-slate-100 leading-tight">{branding.portalName}</div>
+            <div className="text-[10px] text-slate-400 leading-tight">{branding.companyName}</div>
           </div>
           <button className="ml-auto lg:hidden text-slate-400" onClick={() => setSidebarOpen(false)}><X size={18} /></button>
         </div>
@@ -131,10 +128,17 @@ export function Layout() {
             <button
               onClick={() => navigate('/settings')}
               className="hidden sm:flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-600 px-2.5 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
-              title={account ? 'Signed in via Microsoft 365' : 'Sign in (Settings > SSO)'}
+              title={session.via === 'microsoft' ? 'Signed in via Microsoft 365' : 'Local account — manage in Settings'}
             >
-              <UserCircle2 size={15} className={account ? 'text-emerald-500' : 'text-slate-400'} />
-              {account ?? 'Sign in'}
+              <UserCircle2 size={15} className="text-emerald-500" />
+              {session.email}
+            </button>
+            <button
+              onClick={() => { logout(); onLogout(); }}
+              className="rounded-lg border border-slate-200 dark:border-slate-600 p-2 text-slate-500 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
+              title="Sign out"
+            >
+              <LogOut size={16} />
             </button>
             <button
               onClick={() => setDark(!dark)}

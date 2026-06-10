@@ -284,4 +284,42 @@ RECOVER & REPORT:
 5. Timeouts mid-migration: MRS proxy throttling — raise limits in EWS web.config per Microsoft guidance.
 6. Escalation evidence: full Test-MigrationServerAvailability output + IIS logs of /mrsproxy.svc hits.`,
   },
+  {
+    id: 'kb-office-client-hub', title: 'Office / M365 Apps client troubleshooting (Microsoft guide)', service: 'Exchange Online', level: 'L1', tags: ['office', 'outlook', 'client', 'activation', 'microsoft-guide'], favorite: false,
+    body: `Official hub: https://learn.microsoft.com/en-us/troubleshoot/microsoft-365-apps/office-client-welcome
+Covers: installation, activation/licensing, sign-in/authentication, crashes & performance, updates, Outlook-specific issues.
+
+FIRST TOOL — SaRA (Support and Recovery Assistant): https://aka.ms/SaRA
+Automated diagnosis for Office sign-in, activation, Outlook profile and Teams issues. Run it BEFORE manual deep-dives.
+
+Quick triage order for client issues:
+1. Does the problem exist in the web version (OWA/office.com)? Yes = account/service issue, not client.
+2. One user or many? Many = policy/update/Service Health.
+3. Recently changed: password, Office update, new device, migration?
+4. Office repair: Settings > Apps > Microsoft 365 > Modify > Quick Repair (then Online Repair).
+5. New Windows user profile test separates user-profile corruption from machine issues.`,
+  },
+  {
+    id: 'kb-office-activation', title: 'Office activation / "Unlicensed Product" fixes', service: 'Exchange Online', level: 'L1', tags: ['office', 'activation', 'license', 'unlicensed'], favorite: false,
+    body: `Symptoms: "Unlicensed Product", "We couldn't verify your subscription", apps in read-only mode.
+1. Check the user has an M365 Apps license (admin center > user > Licenses) and it provisioned.
+2. File > Office Account: correct account signed in? Sign out, restart Office, sign in again.
+3. Check activation state: cmd > cscript "C:\\Program Files\\Microsoft Office\\Office16\\ospp.vbs" /dstatus (or vNextDiag.ps1 for modern activation).
+4. Clear cached identities: Credential Manager > remove Office/Microsoft entries; also Settings > Accounts > Access work or school > disconnect stale entries.
+5. Shared computer activation (RDS/AVD): verify SCA is enabled in config and licensing supports it.
+6. Device limit: user may have Office on >5 devices — deactivate old installs via portal.office.com > My account.
+Per Microsoft hub: https://learn.microsoft.com/en-us/troubleshoot/microsoft-365-apps/office-client-welcome`,
+  },
+  {
+    id: 'kb-office-signin-loop', title: 'Office sign-in loop / WAM authentication issues', service: 'Entra ID', level: 'L2', tags: ['office', 'wam', 'signin', 'authentication', 'broker'], favorite: false,
+    body: `Symptoms: Office apps keep prompting, blank sign-in window, error 80080300 / AADSTS errors in client.
+Office uses WAM (Web Account Manager) on Windows for auth.
+1. Run SaRA first (aka.ms/SaRA) — it fixes most WAM states automatically.
+2. Check device join state: dsregcmd /status — AzureAdJoined/WorkplaceJoined healthy? AzureAdPrt = YES?
+3. PRT missing: lock/unlock or reboot; persistent = check device in Entra (disabled/stale device object).
+4. Clear stale work accounts: Settings > Accounts > Access work or school > remove duplicates.
+5. Clear Office identity cache: HKCU\\Software\\Microsoft\\Office\\16.0\\Common\\Identity (rename Identity key, restart Office).
+6. Conditional Access requiring compliant device: verify the device is Intune-compliant — sign-in logs show the failing policy.
+Escalate to identity team with dsregcmd output + sign-in log CorrelationId.`,
+  },
 ];

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { HashRouter, Route, Routes } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import Dashboard from './pages/Dashboard';
@@ -18,12 +19,20 @@ import Escalation from './pages/Escalation';
 import KnowledgeBase from './pages/KnowledgeBase';
 import Notes from './pages/Notes';
 import Settings from './pages/Settings';
+import Login from './pages/Login';
+import { getSession, Session } from './services/auth';
 
 export default function App() {
+  const [session, setSession] = useState<Session | null>(getSession());
+
+  if (!session) {
+    return <Login onLogin={setSession} />;
+  }
+
   return (
     <HashRouter>
       <Routes>
-        <Route element={<Layout />}>
+        <Route element={<Layout session={session} onLogout={() => setSession(null)} />}>
           <Route path="/" element={<Dashboard />} />
           <Route path="/tickets" element={<Tickets />} />
           <Route path="/entra" element={<EntraAssistant />} />
