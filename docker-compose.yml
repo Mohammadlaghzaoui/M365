@@ -1,0 +1,17 @@
+services:
+  workpilot:
+    build: .
+    container_name: workpilot
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    environment:
+      # Paste a long random string; this is the agent API key.
+      AGENT_API_KEY: "change-me-to-a-long-random-string"
+      ALLOWED_ORIGINS: ""        # same-origin when serving the portal; leave empty
+      # Microsoft Graph app-only (Entra app registration + admin consent)
+      TENANT_ID: ""
+      CLIENT_ID: ""
+      CLIENT_SECRET: ""
+      POWERSHELL_EXE: "pwsh"     # Linux container = PowerShell 7 (cloud paths only)
+      ALLOW_RAW_POWERSHELL: "false"

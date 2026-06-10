@@ -1,6 +1,8 @@
 import express from 'express';
 import cors from 'cors';
-import { randomUUID } from 'node:crypto';
+import path from 'node:path';
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
 import { runPowerShell, psAvailable } from './powershell.js';
 import { graphRequest, graphConfigured } from './graph.js';
@@ -10,9 +12,22 @@ const app = express();
 app.use(express.json({ limit: '5mb' }));
 app.use(cors({ origin: config.allowedOrigins.length ? config.allowedOrigins : true }));
 
-// ---- API key auth (every route except /health) ----
+// ---- Static portal hosting (all-in-one server mode) ----
+// If agent/public contains the built portal (npm run build:server in the repo
+// root), the agent serves it: one server = portal + API + real execution.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const publicDir = process.env.PUBLIC_DIR || path.join(__dirname, '..', 'public');
+const servesPortal = fs.existsSync(path.join(publicDir, 'index.html'));
+if (servesPortal) {
+  app.use(express.static(publicDir));
+}
+
+const API_PREFIXES = ['/health', '/endpoints', '/provision', '/migrate', '/powershell', '/jobs'];
+const isApi = (p) => API_PREFIXES.some((x) => p === x || p.startsWith(x + '/'));
+
+// ---- API key auth (every API route except /health) ----
 app.use((req, res, next) => {
-  if (req.path === '/health') return next();
+  if (!isApi(req.path) || req.path === '/health') return next();
   const key = req.header('x-api-key');
   if (!config.apiKey || key !== config.apiKey) {
     return res.status(401).json({ error: 'Invalid or missing X-API-Key.' });
@@ -124,7 +139,16 @@ function publicJob(job) {
   };
 }
 
+// SPA fallback: anything that's not an API route serves the portal shell.
+if (servesPortal) {
+  app.get('*', (req, res, next) => {
+    if (isApi(req.path)) return next();
+    res.sendFile(path.join(publicDir, 'index.html'));
+  });
+}
+
 app.listen(config.port, () => {
+  if (servesPortal) console.log(`\n  Portal UI served from ${publicDir}`);
   console.log(`\n  WorkPilot Migration Agent listening on http://localhost:${config.port}`);
   console.log(`  Host: ${config.hostname}`);
   console.log(`  PowerShell: ${config.declaredModules.join(', ') || '(detected at runtime)'}`);

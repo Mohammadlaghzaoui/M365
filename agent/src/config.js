@@ -1,4 +1,20 @@
 import os from 'node:os';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// Zero-dependency .env loader (reads agent/.env if present).
+(() => {
+  const dir = path.dirname(fileURLToPath(import.meta.url));
+  const envPath = path.join(dir, '..', '.env');
+  if (!fs.existsSync(envPath)) return;
+  for (const line of fs.readFileSync(envPath, 'utf8').split(/\r?\n/)) {
+    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/i);
+    if (m && process.env[m[1]] === undefined) {
+      process.env[m[1]] = m[2].replace(/^["']|["']$/g, '');
+    }
+  }
+})();
 
 const bool = (v, d = false) => (v === undefined ? d : /^(1|true|yes)$/i.test(v));
 
