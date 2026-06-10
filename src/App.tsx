@@ -3,7 +3,7 @@ import { HashRouter, Route, Routes } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import Dashboard from './pages/Dashboard';
 import Tickets from './pages/Tickets';
-import { EntraAssistant, ExchangeAssistant, SharePointAssistant, TeamsAssistant } from './pages/Assistants';
+import { EntraAssistant, ExchangeAssistant, SharePointAssistant, TeamsAssistant, EdgeCasesAssistant } from './pages/Assistants';
 import Migration from './pages/Migration';
 import MigrationConsole from './pages/MigrationConsole';
 import Agent from './pages/Agent';
@@ -45,6 +45,7 @@ export default function App() {
           <Route path="/migration" element={<Migration />} />
           <Route path="/migration-console" element={<MigrationConsole />} />
           <Route path="/agent" element={<Agent />} />
+          <Route path="/edge-cases" element={<EdgeCasesAssistant />} />
           <Route path="/cross-tenant" element={<CrossTenant />} />
           <Route path="/hybrid" element={<Hybrid />} />
           <Route path="/bittitan" element={<BitTitan />} />

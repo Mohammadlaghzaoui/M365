@@ -1,0 +1,293 @@
+import { Workflow } from '../types';
+
+const t = (issue: string, findings: string, next: string) =>
+  `[Project note — ${issue}]\nAssessment:\n${findings}\nDecision needed: ${next}`;
+
+/**
+ * Tenant-to-tenant "edge case" game plans: the conditional, OpCo-specific
+ * items that derail migrations when discovered late. Each workflow is a
+ * planning playbook with the known sticking points spelled out.
+ */
+export const edgeCaseWorkflows: Workflow[] = [
+  {
+    id: 'edge-mdm-overview',
+    title: 'MDM device migration — risk matrix & game plan',
+    explanation: 'Moving MDM-enrolled devices between tenants is the highest-risk edge case: depending on the ENROLLMENT METHOD, unenrolling from the source can factory-reset the device. There is no cross-tenant "move" for managed devices — every path is unenroll + re-enroll. Plan per enrollment type, never as one bulk action.',
+    questions: [
+      'Inventory per OpCo: which MDM (Intune, Workspace ONE, MobileIron, Jamf, Meraki)?',
+      'Per platform: enrollment method? (Apple ADE/DEP vs manual; Android Fully Managed vs Work Profile vs BYOD; Windows Autopilot/Entra-joined vs hybrid)',
+      'Are devices supervised (Apple) / device-owner (Android)? Those are the reset-risk groups.',
+      'Corporate-owned vs BYOD split? App data that lives only on the device (auth tokens, local files, WhatsApp-style data)?',
+      'Is Apple Business Manager / Android Enterprise / Autopilot tied to the SOURCE tenant?',
+    ],
+    portalPaths: [
+      'Intune admin center > Devices > All devices (export: enrollment type, ownership, OS)',
+      'Apple Business Manager > Devices (which MDM server serials are assigned to)',
+      'Intune > Devices > Enrollment > Windows: Autopilot devices (hashes registered in source!)',
+    ],
+    steps: [
+      'Export the full device inventory with enrollment profile/type per device — this column decides everything.',
+      'Classify into the risk matrix: (A) reset-on-unenroll: Android Fully Managed/Dedicated, Apple ADE-supervised where the management profile is non-removable; (B) container-only removal: Android Work Profile, iOS User Enrollment/BYOD — work data wiped, device survives; (C) re-provision: Windows Entra-joined/Autopilot — tenant move means unjoin + rejoin (new local profile) or full reset via Autopilot.',
+      'Pre-move the platform anchors: reassign Apple Business Manager serials to the TARGET MDM server token; create new Android Enterprise binding in target; DELETE Autopilot hashes from the source tenant BEFORE importing them in the target (a hash can only exist in one tenant — this blocks re-enrollment if forgotten).',
+      'For group A devices: schedule the wipe as a planned re-provision with the user (backup checklist first: photos on personal-enabled devices, authenticator apps!, local files, eSIM warning on iPhones).',
+      'MFA chicken-and-egg: users re-enrolling need to authenticate to the NEW tenant while their Authenticator may be wiped with the device — issue Temporary Access Passes (TAP) in the target tenant for migration day.',
+      'Pilot one device per enrollment type per OpCo before scheduling waves — this is where you find the surprises.',
+      'Communicate honestly: group A users WILL get a factory-reset experience; frame it as a planned device refresh.',
+    ],
+    powershell: [
+      { label: 'Export Intune devices with enrollment detail (Graph)', command: "Connect-MgGraph -Scopes 'DeviceManagementManagedDevices.Read.All'\nGet-MgDeviceManagementManagedDevice -All | Select-Object DeviceName,OperatingSystem,DeviceEnrollmentType,ManagedDeviceOwnerType,EnrollmentProfileName | Export-Csv devices.csv -NoTypeInformation" },
+      { label: 'Delete Autopilot device from SOURCE (before target import!)', command: "Get-MgDeviceManagementWindowsAutopilotDeviceIdentity -All | Where-Object SerialNumber -eq '<serial>' | ForEach-Object { Remove-MgDeviceManagementWindowsAutopilotDeviceIdentity -WindowsAutopilotDeviceIdentityId $_.Id }" },
+    ],
+    requiredRole: 'Intune Administrator (both tenants) + Apple Business Manager / Android Enterprise admin',
+    dangers: [
+      'NEVER bulk-unenroll Android Fully Managed devices — every one factory-resets immediately.',
+      'Do not retire/wipe before Apple Business Manager serials are reassigned — devices re-enroll into the OLD tenant on reset.',
+      'Authenticator app wiped with the device = user locked out of BOTH tenants without TAP planned.',
+      'Forgetting to delete Autopilot hashes from source blocks Windows re-enrollment in target with a cryptic error.',
+    ],
+    escalation: ['ADE devices whose serials cannot be moved in ABM (purchased outside reseller IDs) — Apple support case', 'Third-party MDM with no documented unenrollment path — vendor case before any pilot'],
+    ticketTemplate: t('MDM device migration plan', '- Inventory: <n> devices; risk groups A/B/C: <counts>\n- Anchors moved: ABM <date>, Autopilot hashes <date>\n- Pilot results per enrollment type: <summary>', 'Wave schedule + comms approval from <OpCo owner>.'),
+  },
+  {
+    id: 'edge-android-fully-managed',
+    title: 'Android Fully Managed → new tenant (the factory-reset one)',
+    explanation: 'Android Enterprise Fully Managed (device owner mode) cannot change owners: unenrollment or removing the work account factory-resets the device by design. The migration IS a reset — plan it as a re-provisioning project, not a settings change.',
+    questions: [
+      'How many Fully Managed vs Work Profile devices (check enrollment profile, not assumptions)?',
+      'Any kiosk/dedicated devices (scanners, warehouse) in the fleet? They are also device-owner mode.',
+      'What local data matters per user group (photos? app data? offline files)?',
+      'Zero-touch enrollment portal in use — and tied to which tenant?',
+    ],
+    portalPaths: [
+      'Intune > Devices > Android (filter "Corporate-owned, fully managed")',
+      'Google Zero-touch portal (zerotouch.google.com) — reassign configurations to target',
+    ],
+    steps: [
+      'Confirm device-owner devices via inventory export; separate dedicated/kiosk devices (no user data, easiest wave).',
+      'Set up Android Enterprise binding + enrollment profiles in the TARGET tenant first; test enrollment with a spare device.',
+      'If zero-touch is used: add the target configuration in the zero-touch portal so a reset lands devices directly in the new tenant.',
+      'User wave: backup guidance (Google account photo sync where allowed), issue TAP for target-tenant auth, then wipe → device reboots into target enrollment.',
+      'Dedicated devices: stage per site with spares — a scanner fleet offline during reset hurts operations.',
+      'Verify per wave: compliance, apps deployed, certificates (Wi-Fi!) landed — Wi-Fi cert profiles missing = devices online via nothing.',
+    ],
+    powershell: [
+      { label: 'Wipe (re-provision) a device via Graph', command: "Invoke-MgGraphRequest -Method POST -Uri \"https://graph.microsoft.com/v1.0/deviceManagement/managedDevices/<deviceId>/wipe\" -Body '{}'" },
+    ],
+    requiredRole: 'Intune Administrator + Google zero-touch admin',
+    dangers: ['Work Profile devices in the same export do NOT need a reset — wiping them angers users for nothing; split the lists carefully.', 'Wi-Fi-only devices that get Wi-Fi via an MDM cert profile brick communicatively after reset until manually joined to a network.'],
+    escalation: ['Zero-touch portal access lost / reseller-managed (reseller ticket)', 'Devices on legacy "device admin" enrollment (deprecated) — treat as manual re-enroll project'],
+    ticketTemplate: t('Android FM re-provision', '- Fully managed: <n>, dedicated: <n>, work profile (no action): <n>\n- Zero-touch: <state>\n- Pilot: <result>', 'Wave dates per site with spare-device pool sized <n>.'),
+  },
+  {
+    id: 'edge-apple-ade',
+    title: 'Apple ADE/DEP devices → new tenant',
+    explanation: 'Supervised iPhones/iPads/Macs enrolled through Apple Automated Device Enrollment carry a non-removable management profile. Moving tenants = reassign the serial in Apple Business Manager to the new MDM server, then erase the device so it re-runs Setup Assistant against the target.',
+    questions: [
+      'Are all serials visible in Apple Business Manager, and does the org own the ABM account (or the source OpCo)?',
+      'Manual/Configurator-enrolled devices mixed in (removable profile, different path)?',
+      'Shared iPads / kiosk iPads in scope?',
+      'eSIM devices? (erase can drop the eSIM — carrier coordination needed)',
+    ],
+    portalPaths: [
+      'Apple Business Manager > Devices > assign to MDM server (target Intune token)',
+      'Intune > Devices > iOS/macOS enrollment > Enrollment program tokens (create in TARGET first)',
+    ],
+    steps: [
+      'Create the ADE token in the target Intune and connect it to ABM.',
+      'In ABM: reassign device serials from the source MDM server to the target MDM server (CSV bulk works).',
+      'Sync the token in target Intune; verify devices appear with the right enrollment profile.',
+      'User backup checklist: iCloud/photos per policy, AUTHENTICATOR apps, notes; warn about eSIM where applicable.',
+      'Erase the device (remote or user-driven) → Setup Assistant → enrolls into the TARGET tenant automatically.',
+      'Manual-enrolled devices (no ADE): remove management profile (no reset needed), then re-enroll via Company Portal — much gentler wave.',
+    ],
+    powershell: [],
+    requiredRole: 'Intune Administrator + Apple Business Manager Administrator',
+    dangers: ['Erasing BEFORE the ABM reassignment re-enrolls the device into the SOURCE tenant — order is everything.', 'If ABM belongs to the source OpCo and they leave, transfer devices to a new ABM org first (Apple process, slow — start early).'],
+    escalation: ['Serials not in ABM (gray-market or old purchases) cannot use ADE — manual enrollment path per device', 'ABM org ownership disputes — Apple Business support'],
+    ticketTemplate: t('Apple ADE migration', '- ADE serials: <n> reassigned in ABM on <date>; manual devices: <n>\n- Target token synced: <state>\n- Pilot erase→re-enroll: <result>', 'Wave planning + eSIM carrier checklist for <n> cellular devices.'),
+  },
+  {
+    id: 'edge-windows-devices',
+    title: 'Windows devices → new tenant (Entra join / Autopilot)',
+    explanation: 'A Windows device can be joined to exactly one Entra tenant. Tenant moves mean unjoin + rejoin (new user profile!) or full Autopilot reset. The silent killer: Autopilot hardware hashes registered in the source tenant block enrollment into the target until deleted.',
+    questions: [
+      'Join type today: Entra joined, Hybrid joined, or domain-only with Intune via co-management?',
+      'Autopilot in use? Hashes registered where?',
+      'BitLocker recovery keys escrowed where (source Entra!) — exported before cutover?',
+      'User data: OneDrive Known Folder Move active (makes profile loss painless) or local profiles?',
+    ],
+    portalPaths: [
+      'Intune > Devices > Enrollment > Windows > Autopilot devices',
+      'Entra admin center > Devices (join state, BitLocker keys per device)',
+    ],
+    steps: [
+      'EXPORT BitLocker recovery keys from the source tenant before anything — after the move you lose access to that escrow.',
+      'Enable OneDrive Known Folder Move toward the TARGET tenant timing-permitting, so Desktop/Documents survive the profile change.',
+      'Delete Autopilot hashes from source, import into target (CSV harvest via Get-WindowsAutopilotInfo if originals are missing).',
+      'Choose per fleet: (a) Autopilot Reset/wipe → clean provision into target (best end state, longest per-device time) or (b) scripted unjoin/rejoin: leave old tenant, Entra-join new tenant — device survives but the user gets a NEW Windows profile; plan profile data copy (USMT/scripts) if KFM is not in place.',
+      'Re-escrow BitLocker to the target after rejoin; verify compliance + Office re-sign-in (WAM may need the old work account removed).',
+      'Hybrid-joined fleets moving to a different AD forest too: that is a full device re-platform — treat as imaging project.',
+    ],
+    powershell: [
+      { label: 'Harvest Autopilot hash on a device', command: 'Install-Script Get-WindowsAutopilotInfo -Force\nGet-WindowsAutopilotInfo -OutputFile C:\\Temp\\hash.csv' },
+      { label: 'Backup BitLocker keys (run while still in source tenant)', command: "Get-MgInformationProtectionBitlockerRecoveryKey -All | Select-Object Id,CreatedDateTime,DeviceId | Export-Csv bitlocker-inventory.csv # retrieve key values per device via portal/Graph with elevated consent" },
+    ],
+    requiredRole: 'Intune Administrator + Cloud Device Administrator (both tenants)',
+    dangers: ['Skipping the BitLocker export = devices that later prompt for recovery have NO retrievable key.', 'Unjoin without a local admin fallback account can lock you out of the device.', 'Autopilot hash still in source = target enrollment fails with 801C03ED-style errors.'],
+    escalation: ['Co-managed (SCCM) fleets — sequence with the ConfigMgr team', 'Devices with third-party disk encryption — vendor guidance before unjoin'],
+    ticketTemplate: t('Windows tenant move', '- Fleet: <n> Entra-joined, <n> hybrid, Autopilot: <n>\n- BitLocker export: <date> ✔\n- Method chosen: <reset/rejoin> after pilot of <n>', 'Wave plan + local admin fallback policy approval.'),
+  },
+  {
+    id: 'edge-public-folders',
+    title: 'Public Folders → target tenant',
+    explanation: 'There is NO native cross-tenant Public Folder migration. On-prem PFs must first be migrated/converted within the hybrid source (or exported), and reaching a different, non-hybrid tenant means export/import or third-party tooling. The modern answer is usually: do not migrate PFs — replace them.',
+    questions: [
+      'Where do PFs live today: Exchange on-prem (hybrid) or already Exchange Online?',
+      'Size + count + how many are MAIL-ENABLED (those have SMTP addresses external senders use!)?',
+      'What are they actually used for? (shared mail intake, calendars, archive dumping ground)',
+      'Is the business open to modernizing into Shared Mailboxes / M365 Groups instead of like-for-like?',
+    ],
+    portalPaths: [
+      'EAC > Public folders (source inventory)',
+      'On-prem EMS for legacy PF statistics',
+    ],
+    steps: [
+      'Inventory: Get-PublicFolder -Recurse with item counts/sizes + Get-MailPublicFolder for the mail-enabled list (these SMTP addresses must be re-created on something in the target!).',
+      'Decide the target shape per folder: mail-enabled PF → SHARED MAILBOX in target (recommended); calendar PF → M365 Group calendar; document dump → SharePoint/Teams; true PF only if the business insists.',
+      'If source PFs are on-prem and target is a DIFFERENT tenant: the supported path is on-prem → source EXO first (hybrid PF migration with the PF migration scripts), but that adds months — for tenant-to-tenant, third-party tools (BitTitan PF projects, Quest) or PST export/import per folder are the practical routes.',
+      'Mail flow cutover: on migration day, the mail-enabled PF addresses must route to their replacement (shared mailbox) in the target — include them in the domain/MX cutover mapping table.',
+      'Permissions do not translate 1:1 (PF client permissions vs mailbox permissions) — rebuild from the inventory, owner-approved.',
+      'Freeze + final delta on PFs is hard with PST routes — schedule a short content freeze window.',
+    ],
+    powershell: [
+      { label: 'Inventory', command: 'Get-PublicFolder -Recurse -ResultSize Unlimited | Select-Object Identity,FolderClass | Export-Csv pf-inventory.csv\nGet-PublicFolderStatistics -ResultSize Unlimited | Select-Object Name,ItemCount,TotalItemSize | Export-Csv pf-sizes.csv\nGet-MailPublicFolder -ResultSize Unlimited | Select-Object DisplayName,PrimarySmtpAddress,EmailAddresses | Export-Csv pf-mail.csv' },
+      { label: 'Create replacement shared mailbox in target', command: "New-Mailbox -Shared -Name 'PF - Invoices' -PrimarySmtpAddress invoices@target.com" },
+    ],
+    requiredRole: 'Exchange Administrator (source on-prem + both tenants)',
+    dangers: ['Forgetting mail-enabled PF SMTP addresses in the cutover = silent inbound mail loss for those addresses.', 'PF hierarchies >x0GB via PST are slow and error-prone — size the freeze window honestly.'],
+    escalation: ['Source PF hierarchy corrupt / legacy versions (Exchange 2010) — specialist engagement', 'Compliance holds on PF content — legal before any export'],
+    ticketTemplate: t('Public Folders plan', '- PFs: <n> (<size>), mail-enabled: <n>\n- Target shape decided: shared mailboxes <n>, groups <n>, drop <n>\n- Method: <tool/PST>; freeze window: <window>', 'Owner sign-off on the folder→target mapping table.'),
+  },
+  {
+    id: 'edge-mapped-drives',
+    title: 'Mapped drives & file servers without AD',
+    explanation: 'Drive letters from GPO/logon scripts die with AD. The data and the access model must both get a new home: SharePoint/OneDrive for collaboration data, Azure Files with Entra Kerberos for true SMB needs — plus a transition trick to keep drive letters working.',
+    questions: [
+      'Inventory: which mapped drives exist (GPP drive maps export), pointing at which shares, used by whom?',
+      'Data type per share: collaboration docs (→ SharePoint) vs app data/scans/databases (→ Azure Files / stays on a server)?',
+      'Apps with hardcoded UNC paths or drive letters?',
+      'Total volume + permission complexity (NTFS groups depth)?',
+    ],
+    portalPaths: [
+      'SharePoint admin center (target sites) / Azure Portal > Storage accounts > Azure Files',
+      'Migration Manager (SharePoint admin center) for file-share → SharePoint migrations',
+    ],
+    steps: [
+      'Export GPP drive mappings + share inventory + NTFS permission report (the access model you must reproduce).',
+      'Split: human collaboration data → SharePoint/Teams (migrate with Migration Manager/SPMT, map NTFS groups → M365 groups); SMB-dependent data (apps, scanners, profiles) → Azure Files with Entra Kerberos auth, or keep a file server.',
+      'User experience bridge: OneDrive sync + "Add shortcut" replaces most drive letters; where a LETTER is mandatory (legacy app), map it to Azure Files via Intune script.',
+      'Replace scan-to-SMB devices: scan-to-email/scan-to-SharePoint, or point scanners at the Azure Files share.',
+      'Pilot one department end-to-end including their printers/scanners/legacy app before bulk waves.',
+      'Decommission shares read-only first (2-4 weeks), then offline — the screams identify forgotten dependencies safely.',
+    ],
+    powershell: [
+      { label: 'Export GPP drive maps', command: "Get-GPO -All | ForEach-Object { Get-GPOReport -Guid $_.Id -ReportType Xml } | Select-String 'DriveMapSettings' # or parse drive maps from the GPO XML reports" },
+      { label: 'Intune drive-map script example (Azure Files)', command: "New-PSDrive -Name 'S' -PSProvider FileSystem -Root '\\\\storacct.file.core.windows.net\\shared' -Persist" },
+    ],
+    requiredRole: 'SharePoint Administrator + Azure subscription contributor + endpoint (Intune) admin',
+    dangers: ['Migrating app/database folders into SharePoint breaks the app (file locking, paths) — classify BEFORE moving.', 'NTFS deny-permissions and deep nesting do not map to SharePoint — redesign, do not replicate.'],
+    escalation: ['Apps with hardcoded UNC paths that cannot change — app owner decision (Azure Files keeps UNC alive)', 'Volumes beyond Migration Manager comfort (multi-TB) — plan Azure Data Box / staged sync'],
+    ticketTemplate: t('File services plan', '- Shares: <n> (<TB>); split: SharePoint <n>, Azure Files <n>, decommission <n>\n- Drive letters needed by apps: <list>\n- Pilot dept: <name> result <ok/issues>', 'Read-only date per share + comms.'),
+  },
+  {
+    id: 'edge-printers',
+    title: 'Network printers without AD (Universal Print)',
+    explanation: 'AD print servers + GPO-deployed printers need a cloud replacement: Universal Print (M365 add-on) with Intune-deployed printer assignments, or direct-IP printing managed by Intune as the budget option.',
+    questions: [
+      'Printer inventory: models, are they Universal Print-native capable (most modern fleet is)?',
+      'Universal Print licenses available (included in many M365 E3/E5 SKUs — check)?',
+      'Print volume/jobs per month (UP has a pooled job quota per license)?',
+      'Badge-release / follow-me printing (PaperCut etc.) in use? That vendor must support the new model.',
+    ],
+    portalPaths: [
+      'Azure portal / UP portal: Universal Print > Printers (register/share)',
+      'Intune > Apps/Configuration: Universal Print printer provisioning policy',
+    ],
+    steps: [
+      'Check license entitlement + job volumes vs included quota.',
+      'Native-capable printers: register directly with Universal Print; legacy printers: deploy the UP connector on any Windows box (can be the old print server during transition).',
+      'Share printers in UP, assign to Entra groups (replaces GPO deployment).',
+      'Deploy via Intune Universal Print provisioning policy → printers appear automatically per user group/location.',
+      'Follow-me/badge vendors: confirm their UP integration or their own cloud agent; pilot per site.',
+      'Decommission print servers after a per-site parallel-run window.',
+    ],
+    powershell: [
+      { label: 'Universal Print PowerShell module', command: "Install-Module UniversalPrintManagement\nConnect-UPService\nGet-UPPrinter | Select-Object Name,Shares" },
+    ],
+    requiredRole: 'Printer Administrator (Universal Print role) + Intune Administrator',
+    dangers: ['Per-site printing breaks if location-based assignment is skipped (users see 200 printers or none).', 'High-volume production printers can blow through UP job quotas — keep those direct-IP.'],
+    escalation: ['Badge-release vendor without cloud story — procurement decision', 'Job quota economics at scale — licensing review'],
+    ticketTemplate: t('Printing plan', '- Printers: <n> (UP-native <n>, connector <n>, direct-IP <n>)\n- Licenses: <ok/shortfall>\n- Pilot site: <result>', 'Per-site rollout + print-server decom dates.'),
+  },
+  {
+    id: 'edge-gpo-to-intune',
+    title: 'GPO → Intune conversion (Group Policy Analytics)',
+    explanation: 'GPOs do not migrate — they get translated. Intune Group Policy Analytics imports your GPO exports and tells you which settings have an MDM equivalent (CSP), which are obsolete, and which need redesign. Expect 60-90% mappable; the rest is the real project.',
+    questions: [
+      'How many GPOs are actually LINKED and live (vs accumulated cruft)?',
+      'Top-risk categories present? (drive maps, logon scripts, printer deployment, folder redirection, security baselines, software install via GPO)',
+      'Any settings enforcing line-of-business app behavior (registry keys) — owners known?',
+      'Target: Entra-joined only, or hybrid remains (then GPO+Intune co-existence rules apply)?',
+    ],
+    portalPaths: [
+      'Intune admin center > Devices > Group Policy analytics (import GPO XML)',
+      'Intune > Endpoint security > Security baselines (replaces security GPOs)',
+      'Intune > Devices > Configuration (Settings catalog / ADMX import for the rest)',
+    ],
+    steps: [
+      'Clean first: identify linked+enabled GPOs only; archive the rest. Migrating 400 GPOs is a smell — most estates need <50 real policies.',
+      'Export each live GPO as XML (Get-GPOReport) and import into Group Policy Analytics → per-setting MDM support percentage.',
+      'Use the built-in "Migrate" action for mappable settings → generates Settings Catalog profiles.',
+      'Replace by category instead of translating 1:1: security GPOs → Intune Security Baselines; drive maps → see mapped-drives playbook; logon scripts → Intune PowerShell scripts/remediations (run-once semantics differ — rewrite, not copy); folder redirection → OneDrive KFM; software-install GPOs → Win32 apps in Intune.',
+      'Custom registry settings without CSP: ADMX ingestion or PowerShell remediation scripts — budget real time here.',
+      'Pilot ring with a representative device + user; diff applied settings (Intune device status + registry spot checks) before broad assignment.',
+    ],
+    powershell: [
+      { label: 'Export all live GPOs for analytics', command: "Get-GPO -All | Where-Object { $_.GpoStatus -ne 'AllSettingsDisabled' } | ForEach-Object { Get-GPOReport -Guid $_.Id -ReportType Xml -Path \"C:\\GPOExport\\$($_.DisplayName).xml\" }" },
+    ],
+    requiredRole: 'Intune Administrator + on-prem GPO read access',
+    dangers: ['Double management (GPO and Intune both setting the same thing during hybrid coexistence) causes flip-flopping — use the MDMWinsOverGP policy deliberately, per setting area.', 'Logon-script logic copied verbatim into Intune scripts often breaks (different context/timing/user vs system).'],
+    escalation: ['Settings with no CSP and business-critical impact — app owner + endpoint architect decision', 'Conflicting OpCo baselines — governance workshop, not engineering'],
+    ticketTemplate: t('GPO conversion', '- Live GPOs: <n>; analytics: <x>% mappable\n- Converted: baselines <n>, settings catalog <n>, scripts <n>\n- Unmappable backlog: <n> items with owners', 'Pilot ring sign-off before ring 2.'),
+  },
+  {
+    id: 'edge-ad-leftovers',
+    title: 'Other AD dependencies discovery (LDAP apps, service accounts, RADIUS)',
+    explanation: 'The catch-all for everything else that quietly depends on AD: LDAP-binding apps, service accounts, NPS/RADIUS for Wi-Fi, certificate auto-enrollment, Kerberos delegation. Find them BEFORE the source AD goes away, not after.',
+    questions: [
+      'Which apps bind to LDAP/LDAPS directly (HR tools, badge systems, NAS boxes, copiers)?',
+      'Wi-Fi auth: NPS/RADIUS against AD? Certificates from AD CS?',
+      'Service accounts: where do they run and what do they touch (scheduled tasks, app pools)?',
+      'Any Kerberos-dependent legacy web apps (IWA)?',
+    ],
+    portalPaths: [
+      'Domain controllers: Security log 4624/4768 analysis for service account + LDAP bind sources',
+      'Entra admin center > Entra Domain Services (the managed-AD fallback)',
+    ],
+    steps: [
+      'Hunt LDAP binds: enable LDAP interface logging on DCs / inspect 2889 events → source IP list = your dependency inventory.',
+      'Per app, pick a path: modern auth (SAML/OIDC via Entra) > LDAP against Entra Domain Services (managed domain, no DC maintenance) > keep a minimal AD island (last resort).',
+      'Wi-Fi/RADIUS: move to certificate-based auth with cloud PKI (Intune cert profiles + a cloud RADIUS like RADIUS-as-a-service, or NPS against Entra DS).',
+      'Service accounts: re-platform tasks to Azure Automation/managed identities where possible; remaining Windows tasks run on members of Entra DS.',
+      'AD CS auto-enrollment users (Wi-Fi/VPN certs): replace with Intune SCEP/PKCS profiles against a cloud or retained PKI.',
+      'Time-box the AD island: every kept dependency gets an owner and an exit date, or it lives forever.',
+    ],
+    powershell: [
+      { label: 'Find accounts with old-style service usage (heuristic)', command: "Get-ADUser -Filter {Enabled -eq $true} -Properties LastLogonDate,ServicePrincipalNames,PasswordNeverExpires | Where-Object { $_.PasswordNeverExpires -or $_.ServicePrincipalNames } | Select-Object SamAccountName,LastLogonDate,PasswordNeverExpires | Export-Csv service-accounts.csv" },
+    ],
+    requiredRole: 'AD admin (read/audit) + Entra/identity architect for target decisions',
+    dangers: ['Decommissioning AD with one forgotten LDAP-binding badge/door system = facilities incident, not an IT ticket.', 'NAS/copier LDAP binds often hold PLAINTEXT service credentials — rotate when discovered.'],
+    escalation: ['Apps that only speak NTLM/Kerberos with no vendor roadmap — application replacement decision', 'PKI strategy (retain AD CS vs cloud PKI) — architecture board'],
+    ticketTemplate: t('AD dependency sweep', '- LDAP bind sources found: <n> (list attached)\n- Disposition: modern auth <n>, Entra DS <n>, AD island <n> (exit dates set)\n- RADIUS/PKI plan: <summary>', 'Owner per remaining dependency confirmed.'),
+  },
+];
