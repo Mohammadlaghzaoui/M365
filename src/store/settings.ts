@@ -36,6 +36,22 @@ export function saveSSOSettings(s: SSOSettings) {
   save('sso-settings', s);
 }
 
+// ---------- Google SSO ----------
+export interface GoogleSSOSettings {
+  enabled: boolean;
+  clientId: string; // OAuth 2.0 Web client ID from Google Cloud Console
+}
+
+export const DEFAULT_GOOGLE_SSO: GoogleSSOSettings = { enabled: false, clientId: '' };
+
+export function getGoogleSSO(): GoogleSSOSettings {
+  return { ...DEFAULT_GOOGLE_SSO, ...load<Partial<GoogleSSOSettings>>('google-sso', {}) };
+}
+
+export function saveGoogleSSO(s: GoogleSSOSettings) {
+  save('google-sso', s);
+}
+
 // ---------- ServiceNow ----------
 export const DEFAULT_SERVICENOW: ServiceNowSettings = { enabled: false, instanceUrl: '', username: '', password: '' };
 
@@ -136,6 +152,7 @@ export function integrationStatus(): { name: string; enabled: boolean }[] {
   return [
     { name: 'AI Assistant', enabled: ai.provider !== 'disabled' && !!ai.apiKey },
     { name: 'Microsoft SSO', enabled: sso.enabled && !!sso.clientId },
+    { name: 'Google SSO', enabled: getGoogleSSO().enabled && !!getGoogleSSO().clientId },
     { name: 'On-Prem AD', enabled: i.onpremAd.enabled && !!i.onpremAd.domainFqdn },
     { name: 'ServiceNow', enabled: sn.enabled && !!sn.instanceUrl },
     { name: 'TOPdesk', enabled: i.topdesk.enabled && !!i.topdesk.baseUrl },

@@ -10,6 +10,10 @@ import { ExternalLink, Star, Activity } from 'lucide-react';
 import { getBranding } from '../store/settings';
 import { getSession } from '../services/auth';
 import { DonutChart, HBarChart, VBarChart } from '../components/charts';
+import { useEffect, useState } from 'react';
+import { getTenantInsights, TenantInsights } from '../services/graphInsights';
+import { currentAccount } from '../services/sso';
+import { Users2, UserX, UserCheck, RefreshCw } from 'lucide-react';
 
 const colorMap: Record<string, string> = {
   blue: 'bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-300',
@@ -29,6 +33,27 @@ export default function Dashboard() {
   const recent = load<string[]>('recent-workflows', []);
   const favPs = load<string[]>('favorite-ps', []);
   const [checked, setChecked] = useLocalStorage<string[]>(todayKey(), []);
+  const [insights, setInsights] = useState<TenantInsights | null>(() => load<TenantInsights | null>('tenant-insights', null));
+  const [insightsState, setInsightsState] = useState<'idle' | 'loading' | 'error' | 'nosso'>('idle');
+
+  const refreshInsights = async () => {
+    setInsightsState('loading');
+    try {
+      if (!(await currentAccount())) { setInsightsState('nosso'); return; }
+      const data = await getTenantInsights();
+      setInsights(data);
+      localStorage.setItem('workpilot:tenant-insights', JSON.stringify(data));
+      setInsightsState('idle');
+    } catch {
+      setInsightsState('error');
+    }
+  };
+
+  useEffect(() => {
+    // Auto-refresh live tenant data when signed in with Microsoft SSO.
+    currentAccount().then((a) => { if (a) refreshInsights(); }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const provLog = load<ProvisioningRequest[]>('provisioning-requests', []);
   const mwStates = load<Record<string, ConsoleProjectState>>('mw-console', {});
@@ -90,6 +115,39 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* Live tenant insights (real Microsoft Graph data) */}
+      <Card className="p-5">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Live tenant insights — Microsoft Graph</h2>
+          <button onClick={refreshInsights} className="flex items-center gap-1.5 text-xs font-semibold text-blue-500 hover:underline" disabled={insightsState === 'loading'}>
+            <RefreshCw size={13} className={insightsState === 'loading' ? 'animate-spin' : ''} /> Refresh
+          </button>
+        </div>
+        {insights ? (
+          <div className="grid grid-cols-3 gap-4">
+            <div className="flex items-center gap-3">
+              <span className="rounded-lg bg-blue-100 dark:bg-blue-900/40 p-2.5 text-blue-600 dark:text-blue-300"><Users2 size={18} /></span>
+              <div><div className="text-2xl font-bold text-slate-800 dark:text-slate-100">{insights.totalUsers.toLocaleString()}</div><div className="text-xs text-slate-400">users in tenant</div></div>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="rounded-lg bg-violet-100 dark:bg-violet-900/40 p-2.5 text-violet-600 dark:text-violet-300"><UserCheck size={18} /></span>
+              <div><div className="text-2xl font-bold text-slate-800 dark:text-slate-100">{insights.guests.toLocaleString()}</div><div className="text-xs text-slate-400">guest accounts</div></div>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="rounded-lg bg-amber-100 dark:bg-amber-900/40 p-2.5 text-amber-600 dark:text-amber-300"><UserX size={18} /></span>
+              <div><div className="text-2xl font-bold text-slate-800 dark:text-slate-100">{insights.disabled.toLocaleString()}</div><div className="text-xs text-slate-400">disabled accounts</div></div>
+            </div>
+          </div>
+        ) : (
+          <p className="text-sm text-slate-400">
+            {insightsState === 'loading' ? 'Loading live data from your tenant…'
+              : insightsState === 'error' ? 'Could not load tenant data — check Graph permissions (User.Read.All) on the SSO app registration.'
+              : 'Sign in with Microsoft 365 (Settings → Sign-in) to show real user/guest/disabled counts straight from your tenant.'}
+          </p>
+        )}
+        {insights && <p className="mt-3 text-[11px] text-slate-400">Real data from Microsoft Graph · last refresh {new Date(insights.fetchedAt).toLocaleString()}</p>}
+      </Card>
 
       {/* Analytics charts */}
       <div className="grid gap-4 lg:grid-cols-3">

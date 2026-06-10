@@ -8,7 +8,8 @@ import {
 import { load, save } from '../store/useLocalStorage';
 import { getBranding } from '../store/settings';
 import { Session, logout } from '../services/auth';
-import { UserCircle2, LogOut, MonitorPlay } from 'lucide-react';
+import { UserCircle2, LogOut, MonitorPlay, ChevronsLeft, ChevronsRight } from 'lucide-react';
+import { LogoFull, LogoMark } from './Logo';
 
 export const NAV = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, group: 'Overview' },
@@ -41,9 +42,14 @@ const GROUPS = ['Overview', 'Helpdesk', 'Migration', 'Operations', 'Tools', 'Ref
 export function Layout({ session, onLogout }: { session: Session; onLogout: () => void }) {
   const [dark, setDark] = useState(() => load('dark-mode', window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false));
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => load('sidebar-collapsed', false));
   const [query, setQuery] = useState('');
   const branding = getBranding();
   const navigate = useNavigate();
+
+  const toggleCollapsed = () => {
+    setCollapsed((c: boolean) => { save('sidebar-collapsed', !c); return !c; });
+  };
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', dark);
@@ -59,49 +65,56 @@ export function Layout({ session, onLogout }: { session: Session; onLogout: () =
   return (
     <div className="flex min-h-screen bg-slate-50 dark:bg-slate-900">
       {/* Sidebar */}
-      <aside className={`fixed inset-y-0 left-0 z-40 w-64 transform border-r border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 transition-transform lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        <div className="flex h-16 items-center gap-2.5 border-b border-slate-200 dark:border-slate-700 px-5">
-          <div className="grid h-8 w-8 grid-cols-2 grid-rows-2 gap-0.5 rounded p-0.5">
-            <div className="rounded-sm bg-[#f25022]" /><div className="rounded-sm bg-[#7fba00]" />
-            <div className="rounded-sm bg-[#00a4ef]" /><div className="rounded-sm bg-[#ffb900]" />
-          </div>
-          <div>
-            <div className="text-sm font-bold text-slate-800 dark:text-slate-100 leading-tight">{branding.portalName}</div>
-            <div className="text-[10px] text-slate-400 leading-tight">{branding.companyName}</div>
-          </div>
+      <aside className={`fixed inset-y-0 left-0 z-40 ${collapsed ? 'lg:w-[76px]' : 'lg:w-64'} w-64 transform border-r border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 transition-all lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div className={`flex h-16 items-center border-b border-slate-200 dark:border-slate-700 ${collapsed ? 'justify-center px-2' : 'gap-2.5 px-4'}`}>
+          {collapsed ? <LogoMark size={34} /> : (
+            <div className="min-w-0">
+              <LogoFull height={26} />
+              <div className="mt-0.5 text-[10px] text-slate-400 leading-tight pl-11 -mt-1">{branding.companyName}</div>
+            </div>
+          )}
           <button className="ml-auto lg:hidden text-slate-400" onClick={() => setSidebarOpen(false)}><X size={18} /></button>
         </div>
-        <nav className="h-[calc(100vh-4rem)] overflow-y-auto p-3 pb-10">
+        <nav className={`h-[calc(100vh-7.5rem)] overflow-y-auto pb-4 ${collapsed ? 'p-2' : 'p-3'}`}>
           {GROUPS.map((group) => (
             <div key={group} className="mb-3">
-              <div className="mb-1 px-3 text-[10px] font-bold uppercase tracking-wider text-slate-400">{group}</div>
+              {!collapsed && <div className="mb-1 px-3 text-[10px] font-bold uppercase tracking-wider text-slate-400">{group}</div>}
+              {collapsed && <div className="mx-2 mb-2 border-t border-slate-100 dark:border-slate-700/60 first:hidden" />}
               {NAV.filter((n) => n.group === group).map((n) => (
                 <NavLink
                   key={n.to}
                   to={n.to}
                   end={n.to === '/'}
+                  title={n.label}
                   onClick={() => setSidebarOpen(false)}
                   className={({ isActive }) =>
-                    `mb-0.5 flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                    `mb-0.5 flex items-center rounded-lg text-sm font-medium transition-colors ${collapsed ? 'justify-center px-0 py-2.5' : 'gap-2.5 px-3 py-2'} ${
                       isActive
                         ? 'bg-blue-600 text-white shadow-sm'
                         : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
                     }`
                   }
                 >
-                  <n.icon size={16} className="shrink-0" />
-                  {n.label}
+                  <n.icon size={collapsed ? 18 : 16} className="shrink-0" />
+                  {!collapsed && n.label}
                 </NavLink>
               ))}
             </div>
           ))}
         </nav>
+        <button
+          onClick={toggleCollapsed}
+          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          className="absolute bottom-0 left-0 right-0 hidden h-12 items-center justify-center gap-2 border-t border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700/50 hover:text-blue-500 lg:flex"
+        >
+          {collapsed ? <ChevronsRight size={16} /> : <><ChevronsLeft size={16} /> Collapse</>}
+        </button>
       </aside>
 
       {sidebarOpen && <div className="fixed inset-0 z-30 bg-black/40 lg:hidden" onClick={() => setSidebarOpen(false)} />}
 
       {/* Main */}
-      <div className="flex min-w-0 flex-1 flex-col lg:pl-64">
+      <div className={`flex min-w-0 flex-1 flex-col transition-all ${collapsed ? 'lg:pl-[76px]' : 'lg:pl-64'}`}>
         <header className="sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-800/90 px-4 backdrop-blur lg:px-8">
           <button className="lg:hidden text-slate-500" onClick={() => setSidebarOpen(true)}><Menu size={20} /></button>
           <div className="relative max-w-md flex-1">

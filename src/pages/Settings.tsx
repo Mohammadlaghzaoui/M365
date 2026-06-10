@@ -9,9 +9,11 @@ import {
   DEFAULT_SYSTEM_PROMPT, getAISettings, saveAISettings, getSSOSettings, saveSSOSettings,
   getServiceNowSettings, saveServiceNowSettings, getBranding, saveBranding, BrandingSettings,
   getIntegrations, saveIntegrations, IntegrationSettings, integrationStatus,
+  getGoogleSSO, saveGoogleSSO, GoogleSSOSettings,
 } from '../store/settings';
 import { testConnection } from '../services/ai';
 import { signIn, signOut, currentAccount } from '../services/sso';
+import { googleSignIn } from '../services/googleAuth';
 import { testServiceNow } from '../services/servicenow';
 import { testJira, testZendesk, testTeamsWebhook, testSlackWebhook } from '../services/integrations';
 import { addUser, changePassword, getSession, listUsers, removeUser } from '../services/auth';
@@ -19,13 +21,13 @@ import { load, save } from '../store/useLocalStorage';
 
 type Tab = 'ai' | 'sso' | 'integrations' | 'branding' | 'account' | 'data';
 
-const tabs: { id: Tab; label: string; icon: typeof Sparkles }[] = [
-  { id: 'ai', label: 'AI Provider', icon: Sparkles },
-  { id: 'sso', label: 'Microsoft SSO', icon: KeyRound },
-  { id: 'integrations', label: 'Integrations', icon: Blocks },
-  { id: 'branding', label: 'Branding', icon: Palette },
-  { id: 'account', label: 'Account & Users', icon: Users },
-  { id: 'data', label: 'Data', icon: Database },
+const tabs: { id: Tab; label: string; desc: string; icon: typeof Sparkles }[] = [
+  { id: 'ai', label: 'AI Provider', desc: 'OpenRouter, OpenAI or Claude', icon: Sparkles },
+  { id: 'sso', label: 'Sign-in (SSO)', desc: 'Microsoft 365 & Google login', icon: KeyRound },
+  { id: 'integrations', label: 'Integrations', desc: 'AD, ITSM, PSA, webhooks', icon: Blocks },
+  { id: 'branding', label: 'Branding', desc: 'Name, logo text, language', icon: Palette },
+  { id: 'account', label: 'Account & Users', desc: 'Passwords and local users', icon: Users },
+  { id: 'data', label: 'Data', desc: 'Backup, import, reset', icon: Database },
 ];
 
 function TestBadge({ state, msg }: { state: 'idle' | 'testing' | 'ok' | 'fail'; msg: string }) {
@@ -59,23 +61,78 @@ export default function Settings() {
   const [tab, setTab] = useState<Tab>('ai');
 
   return (
-    <div className="max-w-4xl">
-      <PageHeader title="Settings" subtitle="AI provider, Microsoft SSO, PSA/ITSM integrations, branding, users and data management." icon={<SettingsIcon size={20} />} />
-      <div className="mb-5 flex flex-wrap gap-2">
-        {tabs.map((t) => (
-          <button key={t.id} onClick={() => setTab(t.id)}
-            className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold ${tab === t.id ? 'bg-blue-600 text-white' : 'border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'}`}>
-            <t.icon size={15} /> {t.label}
-          </button>
-        ))}
+    <div className="max-w-6xl">
+      <PageHeader title="Settings" subtitle="AI provider, sign-in (Microsoft & Google), integrations, branding, users and data management." icon={<SettingsIcon size={20} />} />
+      <div className="grid gap-6 lg:grid-cols-[250px_1fr]">
+        {/* Vertical tab rail */}
+        <div className="space-y-1.5 lg:sticky lg:top-20 lg:self-start">
+          {tabs.map((t) => (
+            <button key={t.id} onClick={() => setTab(t.id)}
+              className={`flex w-full items-start gap-3 rounded-xl border p-3 text-left transition-colors ${tab === t.id ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-slate-200 dark:border-slate-700 hover:border-blue-300 dark:hover:border-blue-700'}`}>
+              <span className={`rounded-lg p-2 ${tab === t.id ? 'bg-blue-600 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-300'}`}><t.icon size={16} /></span>
+              <span>
+                <span className={`block text-sm font-semibold ${tab === t.id ? 'text-blue-700 dark:text-blue-300' : 'text-slate-700 dark:text-slate-200'}`}>{t.label}</span>
+                <span className="block text-xs text-slate-400">{t.desc}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+        <div className="min-w-0">
+          {tab === 'ai' && <AICard />}
+          {tab === 'sso' && <div className="space-y-5"><SSOCard /><GoogleSSOCard /></div>}
+          {tab === 'integrations' && <IntegrationsTab />}
+          {tab === 'branding' && <BrandingCard />}
+          {tab === 'account' && <AccountCard />}
+          {tab === 'data' && <DataCard />}
+        </div>
       </div>
-      {tab === 'ai' && <AICard />}
-      {tab === 'sso' && <SSOCard />}
-      {tab === 'integrations' && <IntegrationsTab />}
-      {tab === 'branding' && <BrandingCard />}
-      {tab === 'account' && <AccountCard />}
-      {tab === 'data' && <DataCard />}
     </div>
+  );
+}
+
+function GoogleSSOCard() {
+  const [s, setS] = useState<GoogleSSOSettings>(getGoogleSSO());
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const set = <K extends keyof GoogleSSOSettings>(k: K, v: GoogleSSOSettings[K]) => {
+    const next = { ...s, [k]: v };
+    setS(next);
+    saveGoogleSSO(next);
+  };
+
+  const test = async () => {
+    setBusy(true); setMsg('');
+    try {
+      const me = await googleSignIn();
+      setMsg(`Connected — signed in as ${me.email}`);
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e));
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <Card className="p-5 space-y-3">
+      <Section title="Google sign-in (Gmail / Google Workspace)">
+        <label className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
+          <input type="checkbox" checked={s.enabled} onChange={(e) => set('enabled', e.target.checked)} className="h-4 w-4 rounded border-slate-300 text-blue-600" />
+          Enable "Sign in with Google" on the login page
+        </label>
+        {s.enabled && (
+          <div className="mt-3 space-y-3">
+            <Field label="OAuth 2.0 Web client ID" value={s.clientId} onChange={(v) => set('clientId', v)} placeholder="1234567890-xxxx.apps.googleusercontent.com" />
+            <p className="text-xs text-slate-400">
+              Setup: Google Cloud Console → APIs & Services → Credentials → Create OAuth client ID (Web application) → add this portal's exact URL (e.g. https://sorrento.cloud) under <strong>Authorized JavaScript origins</strong> → paste the client ID here.
+            </p>
+            <div className="flex items-center gap-3">
+              <Button variant="ai" onClick={test} disabled={busy || !s.clientId}>
+                {busy ? <Loader2 size={15} className="animate-spin" /> : <Plug size={15} />} Test Google sign-in
+              </Button>
+            </div>
+            {msg && <p className={`text-xs ${msg.startsWith('Connected') ? 'text-emerald-600' : 'text-red-500'}`}>{msg}</p>}
+          </div>
+        )}
+      </Section>
+    </Card>
   );
 }
 

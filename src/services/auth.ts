@@ -11,7 +11,7 @@ import { load, save } from '../store/useLocalStorage';
 export interface Session {
   email: string;
   signedInAt: string;
-  via: 'local' | 'microsoft';
+  via: 'local' | 'microsoft' | 'google';
 }
 
 interface LocalUser {
@@ -47,6 +47,12 @@ export async function login(email: string, password: string): Promise<Session> {
 
 export function microsoftSession(email: string): Session {
   const session: Session = { email, signedInAt: new Date().toISOString(), via: 'microsoft' };
+  save('session', session);
+  return session;
+}
+
+export function googleSession(email: string): Session {
+  const session: Session = { email, signedInAt: new Date().toISOString(), via: 'google' };
   save('session', session);
   return session;
 }
