@@ -227,6 +227,41 @@ export interface ServiceNowSettings {
   password: string;
 }
 
+// ---------- Migration Console (MigrationWiz-style) ----------
+export type LineItemStatus =
+  | 'NotStarted' | 'Verifying' | 'Verified' | 'VerifyFailed'
+  | 'Assessing' | 'Assessed' | 'PreStaging' | 'PreStaged'
+  | 'Migrating' | 'DeltaSync' | 'Completed' | 'Failed';
+
+export type MigrationPass = 'verify' | 'assessment' | 'prestage' | 'full' | 'delta' | 'retry';
+
+export interface MigrationLineItem {
+  id: string;
+  sourceEmail: string;
+  destEmail: string;
+  status: LineItemStatus;
+  progress: number;        // 0-100 for the running pass
+  itemsTotal: number;
+  itemsMigrated: number;
+  itemsFailed: number;
+  mbTotal: number;
+  mbMigrated: number;
+  error?: string;
+  errorTransient?: boolean;
+  lastPass?: MigrationPass;
+}
+
+export interface ConsoleEndpoint {
+  type: string;
+  verified: boolean;
+}
+
+export interface ConsoleProjectState {
+  sourceEndpoint: ConsoleEndpoint;
+  destEndpoint: ConsoleEndpoint;
+  items: MigrationLineItem[];
+}
+
 // ---------- User Provisioning (Graph / hybrid) ----------
 export type AccountType = 'Internal' | 'ExternalMember' | 'Guest';
 

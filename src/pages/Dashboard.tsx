@@ -3,10 +3,12 @@ import * as Icons from 'lucide-react';
 import { Card, ProgressBar, Badge } from '../components/ui';
 import { quickActions, dailyChecklist, portalShortcuts } from '../data/dashboard';
 import { useLocalStorage, load } from '../store/useLocalStorage';
-import { Ticket, MigrationProject, SecurityControlState } from '../types';
+import { Ticket, MigrationProject, SecurityControlState, ProvisioningRequest, ConsoleProjectState } from '../types';
 import { securityControls } from '../data/security';
 import { psTasks } from '../data/psTasks';
-import { ExternalLink, Star } from 'lucide-react';
+import { ExternalLink, Star, Activity, Plug } from 'lucide-react';
+import { integrationStatus, getBranding } from '../store/settings';
+import { getSession } from '../services/auth';
 
 const colorMap: Record<string, string> = {
   blue: 'bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-300',
@@ -27,6 +29,13 @@ export default function Dashboard() {
   const favPs = load<string[]>('favorite-ps', []);
   const [checked, setChecked] = useLocalStorage<string[]>(todayKey(), []);
 
+  const provLog = load<ProvisioningRequest[]>('provisioning-requests', []);
+  const mwStates = load<Record<string, ConsoleProjectState>>('mw-console', {});
+  const mwItems = Object.values(mwStates).flatMap((s) => s.items);
+  const integrations = integrationStatus();
+  const branding = getBranding();
+  const session = getSession();
+
   const openTickets = tickets.filter((t) => t.status !== 'closed');
   const urgent = openTickets.filter((t) => t.urgency === 'high' || t.urgency === 'critical');
   const activeProjects = projects.filter((p) => p.status !== 'completed');
@@ -34,16 +43,48 @@ export default function Dashboard() {
   const secPct = Math.round((compliant / securityControls.length) * 100);
   const dailyPct = Math.round((checked.length / dailyChecklist.length) * 100);
   const favTasks = psTasks.filter((t) => favPs.includes(t.id));
+  const mwCompleted = mwItems.filter((i) => i.status === 'Completed').length;
+  const mwFailed = mwItems.filter((i) => i.status === 'Failed' || i.status === 'VerifyFailed').length;
+
+  const activity: { time: string; text: string; color: string }[] = [
+    ...provLog.slice(0, 6).map((p) => ({ time: p.createdAt, text: `Provisioning ${p.status}: ${p.displayName || p.mail} (${p.accountType})`, color: p.status === 'Failed' || p.status === 'ValidationError' ? 'bg-red-500' : p.status === 'Created' || p.status === 'Invited' ? 'bg-emerald-500' : 'bg-amber-500' })),
+    ...tickets.slice(0, 6).map((t) => ({ time: t.createdAt, text: `Ticket ${t.status}: [${t.service}] ${t.category} — ${t.customer}`, color: t.urgency === 'high' || t.urgency === 'critical' ? 'bg-red-500' : 'bg-blue-500' })),
+  ].sort((a, b) => b.time.localeCompare(a.time)).slice(0, 8);
 
   const toggle = (id: string) =>
     setChecked((prev) => (prev.includes(id) ? prev.filter((c) => c !== id) : [...prev, id]));
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Welcome to M365 WorkPilot</h1>
-        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Your Microsoft 365 Service Provider cockpit — pick a task and let the portal guide you step by step.</p>
+      {/* Hero */}
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-blue-700 via-blue-800 to-violet-900 p-6 text-white shadow-lg">
+        <div className="absolute -right-16 -top-16 h-64 w-64 rounded-full bg-white/10 blur-2xl" />
+        <div className="relative flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-widest text-blue-200">{branding.companyName} · {new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}</p>
+            <h1 className="mt-1 text-2xl font-bold">Welcome back{session ? `, ${session.email.split('@')[0]}` : ''} 👋</h1>
+            <p className="mt-1 text-sm text-blue-100">Your Microsoft 365 service cockpit — {openTickets.length} open ticket{openTickets.length === 1 ? '' : 's'}, {activeProjects.length} active migration project{activeProjects.length === 1 ? '' : 's'}, security baseline at {secPct}%.</p>
+          </div>
+          <div className="flex gap-6 text-center">
+            <div><div className="text-3xl font-bold">{mwCompleted}</div><div className="text-[11px] uppercase tracking-wide text-blue-200">mailboxes migrated</div></div>
+            <div><div className={`text-3xl font-bold ${mwFailed ? 'text-amber-300' : ''}`}>{mwFailed}</div><div className="text-[11px] uppercase tracking-wide text-blue-200">migration failures</div></div>
+            <div><div className="text-3xl font-bold">{provLog.length}</div><div className="text-[11px] uppercase tracking-wide text-blue-200">provisioning requests</div></div>
+          </div>
+        </div>
       </div>
+
+      {/* Integration status strip */}
+      <Card className="p-4">
+        <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400"><Plug size={13} /> Platform integrations</div>
+        <div className="flex flex-wrap gap-2">
+          {integrations.map((i) => (
+            <Link key={i.name} to="/settings" className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${i.enabled ? 'border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-900/20' : 'border-slate-200 dark:border-slate-700 text-slate-400 hover:border-blue-300'}`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${i.enabled ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600'}`} />
+              {i.name}
+            </Link>
+          ))}
+        </div>
+      </Card>
 
       {/* Stats */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
@@ -146,6 +187,22 @@ export default function Dashboard() {
           </div>
         </Card>
       </div>
+
+      {/* Activity feed */}
+      {activity.length > 0 && (
+        <Card className="p-5">
+          <div className="mb-3 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400"><Activity size={14} /> Recent activity</div>
+          <div className="space-y-2.5">
+            {activity.map((a, i) => (
+              <div key={i} className="flex items-start gap-3 text-sm">
+                <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${a.color}`} />
+                <span className="flex-1 text-slate-700 dark:text-slate-200">{a.text}</span>
+                <span className="shrink-0 text-xs text-slate-400">{new Date(a.time).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
 
       {/* Open tickets table */}
       {openTickets.length > 0 && (

@@ -281,6 +281,42 @@ function IntegrationsTab() {
         </Section>
       </Card>
 
+      {/* PSA / ITSM connectors */}
+      <Card className="p-5 space-y-4">
+        <Section title="PSA / ITSM connectors (MSP tooling)">
+          <p className="mb-2 text-xs text-slate-400">Credentials are stored locally and used by ticket sync features; most PSA APIs require a backend proxy for browser calls — the config here plugs straight into that backend later.</p>
+
+          {([
+            { key: 'topdesk', title: 'TOPdesk', fields: [['baseUrl', 'Base URL', 'https://yourcompany.topdesk.net'], ['username', 'Operator username', ''], ['appPassword', 'Application password', '']] },
+            { key: 'halopsa', title: 'HaloPSA', fields: [['baseUrl', 'Base URL', 'https://yourcompany.halopsa.com'], ['clientId', 'Client ID', ''], ['clientSecret', 'Client secret', '']] },
+            { key: 'connectwise', title: 'ConnectWise Manage', fields: [['baseUrl', 'API URL', 'https://api-eu.myconnectwise.net'], ['companyId', 'Company ID', ''], ['publicKey', 'Public key', ''], ['privateKey', 'Private key', '']] },
+            { key: 'autotask', title: 'Datto Autotask', fields: [['apiUser', 'API user', ''], ['secret', 'Secret', ''], ['integrationCode', 'Integration code', '']] },
+            { key: 'freshservice', title: 'Freshservice', fields: [['domain', 'Domain', 'yourcompany.freshservice.com'], ['apiKey', 'API key', '']] },
+          ] as { key: keyof IntegrationSettings; title: string; fields: [string, string, string][] }[]).map((c) => {
+            const section = intg[c.key] as unknown as Record<string, string | boolean>;
+            return (
+              <div key={c.key} className="border-t border-slate-100 dark:border-slate-700/60 pt-3 first:border-t-0 first:pt-0">
+                <label className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
+                  <input type="checkbox" checked={Boolean(section.enabled)}
+                    onChange={(e) => setI(c.key, { enabled: e.target.checked } as Partial<IntegrationSettings[typeof c.key]>)}
+                    className="h-4 w-4 rounded border-slate-300 text-blue-600" />
+                  {c.title}
+                </label>
+                {Boolean(section.enabled) && (
+                  <div className="mt-2 grid gap-3 sm:grid-cols-3">
+                    {c.fields.map(([fk, label, ph]) => (
+                      <Field key={fk} label={label} type={/secret|password|key/i.test(fk) ? 'password' : 'text'}
+                        value={String(section[fk] ?? '')} placeholder={ph}
+                        onChange={(v) => setI(c.key, { [fk]: v } as Partial<IntegrationSettings[typeof c.key]>)} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </Section>
+      </Card>
+
       {/* Teams & Slack webhooks */}
       <Card className="p-5 space-y-3">
         <Section title="Notifications — Microsoft Teams & Slack webhooks">

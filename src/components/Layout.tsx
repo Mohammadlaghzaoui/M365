@@ -8,7 +8,7 @@ import {
 import { load, save } from '../store/useLocalStorage';
 import { getBranding } from '../store/settings';
 import { Session, logout } from '../services/auth';
-import { UserCircle2, LogOut } from 'lucide-react';
+import { UserCircle2, LogOut, MonitorPlay } from 'lucide-react';
 
 export const NAV = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, group: 'Overview' },
@@ -18,6 +18,7 @@ export const NAV = [
   { to: '/sharepoint', label: 'SharePoint Online', icon: Boxes, group: 'Helpdesk' },
   { to: '/teams', label: 'Microsoft Teams', icon: Users, group: 'Helpdesk' },
   { to: '/migration', label: 'Migration Projects', icon: FolderKanban, group: 'Migration' },
+  { to: '/migration-console', label: 'Migration Console', icon: MonitorPlay, group: 'Migration' },
   { to: '/cross-tenant', label: 'Cross-Tenant Migration', icon: ArrowLeftRight, group: 'Migration' },
   { to: '/hybrid', label: 'Hybrid / On-Prem Connector', icon: Boxes, group: 'Migration' },
   { to: '/bittitan', label: 'BitTitan MigrationWiz', icon: Cloud, group: 'Migration' },

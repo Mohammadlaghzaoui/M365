@@ -83,6 +83,12 @@ export interface IntegrationSettings {
   slackWebhook: { enabled: boolean; url: string };
   bittitan: { enabled: boolean; apiKey: string };
   syskit: { enabled: boolean; baseUrl: string };
+  topdesk: { enabled: boolean; baseUrl: string; username: string; appPassword: string };
+  halopsa: { enabled: boolean; baseUrl: string; clientId: string; clientSecret: string };
+  connectwise: { enabled: boolean; baseUrl: string; companyId: string; publicKey: string; privateKey: string };
+  autotask: { enabled: boolean; apiUser: string; secret: string; integrationCode: string };
+  freshservice: { enabled: boolean; domain: string; apiKey: string };
+  intune: { enabled: boolean; note: string };
 }
 
 export const DEFAULT_INTEGRATIONS: IntegrationSettings = {
@@ -92,18 +98,45 @@ export const DEFAULT_INTEGRATIONS: IntegrationSettings = {
   slackWebhook: { enabled: false, url: '' },
   bittitan: { enabled: false, apiKey: '' },
   syskit: { enabled: false, baseUrl: '' },
+  topdesk: { enabled: false, baseUrl: '', username: '', appPassword: '' },
+  halopsa: { enabled: false, baseUrl: '', clientId: '', clientSecret: '' },
+  connectwise: { enabled: false, baseUrl: '', companyId: '', publicKey: '', privateKey: '' },
+  autotask: { enabled: false, apiUser: '', secret: '', integrationCode: '' },
+  freshservice: { enabled: false, domain: '', apiKey: '' },
+  intune: { enabled: false, note: '' },
 };
 
 export function getIntegrations(): IntegrationSettings {
   const stored = load<Partial<IntegrationSettings>>('integrations', {});
-  return {
-    jira: { ...DEFAULT_INTEGRATIONS.jira, ...stored.jira },
-    zendesk: { ...DEFAULT_INTEGRATIONS.zendesk, ...stored.zendesk },
-    teamsWebhook: { ...DEFAULT_INTEGRATIONS.teamsWebhook, ...stored.teamsWebhook },
-    slackWebhook: { ...DEFAULT_INTEGRATIONS.slackWebhook, ...stored.slackWebhook },
-    bittitan: { ...DEFAULT_INTEGRATIONS.bittitan, ...stored.bittitan },
-    syskit: { ...DEFAULT_INTEGRATIONS.syskit, ...stored.syskit },
-  };
+  const merged = {} as IntegrationSettings;
+  (Object.keys(DEFAULT_INTEGRATIONS) as (keyof IntegrationSettings)[]).forEach((k) => {
+    (merged as unknown as Record<string, unknown>)[k] = { ...DEFAULT_INTEGRATIONS[k], ...(stored[k] as object | undefined) };
+  });
+  return merged;
+}
+
+/** Status overview used by the dashboard integration strip. */
+export function integrationStatus(): { name: string; enabled: boolean }[] {
+  const i = getIntegrations();
+  const sn = getServiceNowSettings();
+  const ai = getAISettings();
+  const sso = getSSOSettings();
+  return [
+    { name: 'AI Assistant', enabled: ai.provider !== 'disabled' && !!ai.apiKey },
+    { name: 'Microsoft SSO', enabled: sso.enabled && !!sso.clientId },
+    { name: 'ServiceNow', enabled: sn.enabled && !!sn.instanceUrl },
+    { name: 'TOPdesk', enabled: i.topdesk.enabled && !!i.topdesk.baseUrl },
+    { name: 'Jira', enabled: i.jira.enabled && !!i.jira.baseUrl },
+    { name: 'Zendesk', enabled: i.zendesk.enabled && !!i.zendesk.subdomain },
+    { name: 'HaloPSA', enabled: i.halopsa.enabled && !!i.halopsa.baseUrl },
+    { name: 'ConnectWise', enabled: i.connectwise.enabled && !!i.connectwise.baseUrl },
+    { name: 'Autotask', enabled: i.autotask.enabled && !!i.autotask.apiUser },
+    { name: 'Freshservice', enabled: i.freshservice.enabled && !!i.freshservice.domain },
+    { name: 'Teams alerts', enabled: i.teamsWebhook.enabled && !!i.teamsWebhook.url },
+    { name: 'Slack alerts', enabled: i.slackWebhook.enabled && !!i.slackWebhook.url },
+    { name: 'BitTitan API', enabled: i.bittitan.enabled && !!i.bittitan.apiKey },
+    { name: 'Syskit', enabled: i.syskit.enabled && !!i.syskit.baseUrl },
+  ];
 }
 
 export function saveIntegrations(s: IntegrationSettings) {
