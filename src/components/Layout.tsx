@@ -8,7 +8,7 @@ import {
 import { load, save } from '../store/useLocalStorage';
 import { getBranding } from '../store/settings';
 import { Session, logout } from '../services/auth';
-import { UserCircle2, LogOut, MonitorPlay, ChevronsLeft, ChevronsRight } from 'lucide-react';
+import { UserCircle2, LogOut, MonitorPlay, ChevronsLeft, ChevronsRight, Cpu } from 'lucide-react';
 import { LogoFull, LogoMark } from './Logo';
 
 export const NAV = [
@@ -20,6 +20,7 @@ export const NAV = [
   { to: '/teams', label: 'Microsoft Teams', icon: Users, group: 'Helpdesk' },
   { to: '/migration', label: 'Migration Projects', icon: FolderKanban, group: 'Migration' },
   { to: '/migration-console', label: 'Migration Console', icon: MonitorPlay, group: 'Migration' },
+  { to: '/agent', label: 'Migration Agent', icon: Cpu, group: 'Migration' },
   { to: '/cross-tenant', label: 'Cross-Tenant Migration', icon: ArrowLeftRight, group: 'Migration' },
   { to: '/hybrid', label: 'Hybrid / On-Prem Connector', icon: Boxes, group: 'Migration' },
   { to: '/bittitan', label: 'BitTitan MigrationWiz', icon: Cloud, group: 'Migration' },
