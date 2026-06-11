@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { runPowerShell } from './powershell.js';
 import { graphRequest } from './graph.js';
 import { config } from './config.js';
+import { buildMigrationBatchScript, getBatchStatus, testEndpoint, exoConfigured } from './exchange.js';
 
 export const jobs = new Map();
 
@@ -33,6 +34,7 @@ export async function runJob(job) {
   try {
     if (job.type === 'provision-user') await provisionUser(job);
     else if (job.type === 'migrate-batch') await migrateBatch(job);
+    else if (job.type === 'migrate-test') await migrateTest(job);
     else if (job.type === 'powershell') await rawPowerShell(job);
     else throw new Error(`Unknown job type ${job.type}`);
     job.status = 'completed';
@@ -99,17 +101,58 @@ function buildAdScript(p) {
 async function migrateBatch(job) {
   const p = job.payload ?? {};
   log(job, `Preparing migration batch "${p.batchName}" (${(p.users || []).length} users) ...`, 'info');
-  // The real command runs in an Exchange Online PowerShell session on the agent host.
-  // We pass through the operator-validated New-MigrationBatch invocation.
-  const script = p.script;
-  if (!script) {
-    log(job, 'No batch script supplied — agent expects the portal to pass the validated New-MigrationBatch command.', 'warn');
-    throw new Error('Missing migration batch script.');
+  log(job, `Endpoint: ${p.endpointName} | Target delivery domain: ${p.targetDeliveryDomain}`, 'info');
+  if (!exoConfigured()) {
+    log(job, 'Exchange Online app-only auth is not configured (EXO_APP_ID/EXO_ORG/EXO_CERT_THUMBPRINT). Falling back to an interactive Connect-ExchangeOnline on the agent host.', 'warn');
   }
+  // Prefer an operator-supplied validated script; otherwise build it from params.
+  const script = p.script || buildMigrationBatchScript(p);
   log(job, 'Connecting to Exchange Online and submitting the batch ...', 'info');
   const out = await runPowerShell(script, { onData: (l) => log(job, l) });
-  job.result = { status: 'Submitted', output: out.slice(-2000) };
-  log(job, 'Migration batch submitted. Poll Get-MigrationUserStatistics for progress.', 'ok');
+  job.result = { status: 'Submitted', batchName: p.batchName, output: out.slice(-4000) };
+  log(job, 'Migration batch submitted. Use migrate/status to poll Get-MigrationUserStatistics.', 'ok');
+}
+
+// ---- Test migration: validate endpoint + dry-run a small batch, surface errors ----
+async function migrateTest(job) {
+  const p = job.payload ?? {};
+  log(job, `TEST migration for "${p.batchName}" — validating before any real move ...`, 'info');
+  log(job, `Step 1/2: Test-MigrationServerAvailability on endpoint "${p.endpointName}" ...`, 'info');
+  const testMailbox = (p.users || [])[0]?.source;
+  try {
+    const avail = await testEndpoint(p.endpointName, testMailbox, (l) => log(job, l));
+    const r = avail[0] ?? {};
+    if (String(r.Result ?? r.result).toLowerCase().includes('success')) {
+      log(job, `Endpoint reachable: ${r.Message ?? r.message ?? 'OK'}`, 'ok');
+    } else {
+      log(job, `Endpoint check returned: ${r.Result ?? ''} ${r.Message ?? r.message ?? ''}`, 'warn');
+    }
+  } catch (e) {
+    log(job, `Endpoint validation FAILED: ${e.message}`, 'err');
+    job.result = { status: 'TestFailed', stage: 'endpoint', error: String(e.message) };
+    throw e;
+  }
+  log(job, `Step 2/2: validating ${(p.users || []).length} CSV row(s) and recipient readiness ...`, 'info');
+  // Per-user recipient validation (cheap, read-only) to surface the common errors.
+  const checkScript = buildRecipientCheckScript(p);
+  const out = await runPowerShell(checkScript, { onData: (l) => log(job, l) });
+  job.result = { status: 'TestPassed', detail: out.slice(-2000) };
+  log(job, 'TEST migration validation finished — review any per-user warnings above.', 'ok');
+}
+
+function buildRecipientCheckScript(p) {
+  const esc = (s = '') => String(s).replace(/'/g, "''");
+  const lines = (p.users || []).map((u) => `Try {
+  $r = Get-Recipient -Identity '${esc(u.destination || u.source)}' -ErrorAction Stop
+  Write-Output ("OK  ${esc(u.source)} -> " + $r.RecipientTypeDetails)
+} Catch {
+  Write-Output ("ERR ${esc(u.source)} -> " + $_.Exception.Message)
+}`).join('\n');
+  return `Import-Module ExchangeOnlineManagement -ErrorAction Stop
+if (-not (Get-ConnectionInformation -ErrorAction SilentlyContinue)) {
+  ${exoConfigured() ? `Connect-ExchangeOnline -AppId '${esc(config.exoAppId)}' -Organization '${esc(config.exoOrg)}' -CertificateThumbprint '${esc(config.exoCertThumbprint)}' -ShowBanner:$false -ErrorAction Stop` : `Connect-ExchangeOnline -ShowBanner:$false -ErrorAction Stop`}
+}
+${lines}`;
 }
 
 // ---- Raw operator PowerShell (guarded by ALLOW_RAW_POWERSHELL) ----

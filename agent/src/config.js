@@ -32,6 +32,11 @@ export const config = {
   clientId: process.env.CLIENT_ID ?? '',
   clientSecret: process.env.CLIENT_SECRET ?? '',
 
+  // Exchange Online app-only (certificate) for the Migration Console
+  exoAppId: process.env.EXO_APP_ID ?? '',
+  exoOrg: process.env.EXO_ORG ?? '',
+  exoCertThumbprint: process.env.EXO_CERT_THUMBPRINT ?? '',
+
   // Safety switches
   allowRawPowerShell: bool(process.env.ALLOW_RAW_POWERSHELL, false),
   powershellExe: process.env.POWERSHELL_EXE ?? (process.platform === 'win32' ? 'powershell.exe' : 'pwsh'),

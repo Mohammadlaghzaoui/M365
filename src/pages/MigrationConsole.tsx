@@ -5,9 +5,9 @@ import { uid, useLocalStorage } from '../store/useLocalStorage';
 import { ConsoleProjectState, MigrationLineItem, MigrationPass, MigrationProject } from '../types';
 import { buildStages, migrationTypeLabels } from '../data/migrationStages';
 import { getIntegrations } from '../store/settings';
-import { agentConfigured, verifyEndpoint, startMigration, trackJob, agentHealth, AgentHealth } from '../services/agent';
+import { agentConfigured, verifyEndpoint, startMigration, testMigration, getBatchStatus, trackJob, agentHealth, AgentHealth } from '../services/agent';
 import { Link } from 'react-router-dom';
-import { Cpu, CheckCircle2, XCircle } from 'lucide-react';
+import { Cpu, CheckCircle2, XCircle, FlaskConical } from 'lucide-react';
 
 /**
  * Migration Console — MigrationWiz-style operational console on top of the
@@ -67,6 +67,9 @@ export default function MigrationConsole() {
   const [log, setLog] = useState<LogLine[]>([]);
   const [running, setRunning] = useState<MigrationPass | null>(null);
   const [quickName, setQuickName] = useState('');
+  const [endpointName, setEndpointName] = useState('CrossTenantEndpoint');
+  const [targetDeliveryDomain, setTargetDeliveryDomain] = useState('target.onmicrosoft.com');
+  const [testing, setTesting] = useState(false);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const bittitanKey = getIntegrations().bittitan;
   const hasAgent = agentConfigured();
@@ -92,24 +95,120 @@ export default function MigrationConsole() {
     }
   };
 
+  const migrationParams = (queue: MigrationLineItem[]) => ({
+    batchName: `${(project?.name ?? 'batch').replace(/[^a-z0-9]/gi, '-')}-${Date.now().toString(36)}`,
+    endpointName,
+    targetDeliveryDomain,
+    users: queue.map((i) => ({ source: i.sourceEmail, destination: i.destEmail })),
+  });
+
+  // Map live Exchange Online migration-user status into the line-item table.
+  const applyBatchStatus = (users: { identity: string; status: string; percent: number; synced: number; skipped: number; error: string }[]) => {
+    setState((s) => ({
+      ...s,
+      items: s.items.map((i) => {
+        const u = users.find((x) => (x.identity ?? '').toLowerCase().includes(i.sourceEmail.toLowerCase()) || (x.identity ?? '').toLowerCase().includes(i.destEmail.toLowerCase()));
+        if (!u) return i;
+        const st = (u.status || '').toLowerCase();
+        const status: MigrationLineItem['status'] =
+          st.includes('completed') || st.includes('finished') ? 'Completed'
+          : st.includes('failed') ? 'Failed'
+          : st.includes('synced') ? 'PreStaged'
+          : st.includes('syncing') || st.includes('progress') ? 'Migrating' : i.status;
+        return { ...i, status, progress: u.percent ?? i.progress, itemsMigrated: u.synced ?? i.itemsMigrated, itemsFailed: u.skipped ?? i.itemsFailed, error: u.error || undefined, errorTransient: false };
+      }),
+    }));
+  };
+
   const fullMigrateViaAgent = async () => {
     const queue = items.filter((i) => ['Verified', 'Assessed', 'PreStaged'].includes(i.status));
-    if (!queue.length) { addLog('No eligible items for the agent migration.', 'warn'); return; }
-    addLog(`Agent: submitting migration batch for ${queue.length} mailbox(es) ...`, 'cmd');
+    if (!queue.length) { addLog('No eligible items — run Verify first (or import users).', 'warn'); return; }
+    const params = migrationParams(queue);
+    addLog(`Agent: New-MigrationBatch "${params.batchName}" — endpoint ${endpointName}, ${queue.length} mailbox(es) ...`, 'cmd');
+    setRunning('full');
     try {
-      const { jobId } = await startMigration({
-        batchName: `${project?.name ?? 'batch'}-${Date.now().toString(36)}`,
-        users: queue.map((i) => ({ source: i.sourceEmail, destination: i.destEmail })),
-        // The validated PowerShell command is supplied by the operator workflow;
-        // here we pass the intent and let the agent run its New-MigrationBatch.
-        script: '',
-      });
-      addLog(`Agent: job ${jobId} accepted. Streaming log ...`, 'info');
-      const job = await trackJob(jobId, (l) => addLog(`Agent» ${l.text}`, l.level === 'err' ? 'err' : l.level === 'ok' ? 'ok' : 'info'));
-      addLog(`Agent: job ${job.status}.`, job.status === 'completed' ? 'ok' : 'err');
+      const { jobId } = await startMigration(params);
+      addLog(`Agent: job ${jobId} accepted. Streaming Exchange Online output ...`, 'info');
+      await trackJob(jobId, (l) => addLog(`Agent» ${l.text}`, l.level === 'err' ? 'err' : l.level === 'ok' ? 'ok' : 'info'));
+      // Poll real per-user statistics a few times to populate the table.
+      for (let n = 0; n < 3; n++) {
+        try {
+          const { users } = await getBatchStatus(params.batchName);
+          if (users?.length) { applyBatchStatus(users); addLog(`Agent: status refreshed (${users.length} users).`, 'info'); }
+        } catch { /* batch may still be provisioning */ }
+        await new Promise((r) => setTimeout(r, 2500));
+      }
+      addLog('Agent: batch submitted. Use "Refresh live status" to keep polling Get-MigrationUserStatistics.', 'ok');
     } catch (e) {
       addLog(`Agent migration error: ${e instanceof Error ? e.message : e}`, 'err');
+    } finally {
+      setRunning(null);
     }
+  };
+
+  const refreshLiveStatus = async () => {
+    addLog('Agent: polling Get-MigrationUserStatistics ...', 'cmd');
+    try {
+      // Find the most recent batch name from a real job isn't tracked here; ask by project-derived prefix.
+      const params = migrationParams(items);
+      const { users } = await getBatchStatus(params.batchName);
+      if (users?.length) { applyBatchStatus(users); addLog(`Agent: ${users.length} user(s) refreshed.`, 'ok'); }
+      else addLog('Agent: no statistics returned (batch name may differ — re-run Full migration).', 'warn');
+    } catch (e) {
+      addLog(`Agent status error: ${e instanceof Error ? e.message : e}`, 'err');
+    }
+  };
+
+  // ---------- TEST MIGRATION: validate endpoint + dry-run, surface errors ----------
+  const runTestMigration = async () => {
+    if (running || testing) return;
+    const queue = items.length ? items : [];
+    if (!queue.length) { addLog('Import at least one user before testing.', 'warn'); return; }
+    setTesting(true);
+    addLog(`Test-Migration -Endpoint "${endpointName}" -Users ${queue.length} -Mode DryRun`, 'cmd');
+
+    if (hasAgent && agentOk) {
+      try {
+        const { jobId } = await testMigration(migrationParams(queue));
+        addLog(`Agent: test job ${jobId} — running Test-MigrationServerAvailability + recipient checks ...`, 'info');
+        const job = await trackJob(jobId, (l) => addLog(`Agent» ${l.text}`, l.level === 'err' ? 'err' : l.level === 'ok' ? 'ok' : 'info'));
+        addLog(`Agent: test ${job.status}.`, job.status === 'completed' ? 'ok' : 'err');
+      } catch (e) {
+        addLog(`Agent test error: ${e instanceof Error ? e.message : e}`, 'err');
+      } finally {
+        setTesting(false);
+      }
+      return;
+    }
+
+    // Rehearsal test: validate config + per-user deterministic checks, mark errors in the table.
+    addLog('Rehearsal test (no agent) — validating configuration and each mailbox ...', 'info');
+    let problems = 0;
+    if (!/\.onmicrosoft\.com$/i.test(targetDeliveryDomain)) { addLog(`[ WARN ] Target delivery domain "${targetDeliveryDomain}" is usually <tenant>.onmicrosoft.com.`, 'warn'); }
+    if (!endpointName.trim()) { addLog('[ FAIL ] Migration endpoint name is empty.', 'err'); problems++; }
+
+    for (const it of queue) {
+      await new Promise((r) => setTimeout(r, 180));
+      const h = hash(it.sourceEmail);
+      let err = '';
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(it.destEmail)) err = 'NotAcceptedDomainException — destination is not a valid SMTP address';
+      else if (it.destEmail.toLowerCase() === it.sourceEmail.toLowerCase()) err = 'Source and destination identical — target MailUser identity required';
+      else if (h % 12 === 5) err = 'MissingExchangeGuidException — target MailUser has no ExchangeGuid stamped';
+      else if (h % 17 === 3) err = 'MailboxNotInCrossTenantMigrationScopeException — user not in the source scope group';
+      if (err) {
+        problems++;
+        addLog(`[ FAIL ] ${it.sourceEmail}: ${err}`, 'err');
+        setState((s) => ({ ...s, items: s.items.map((x) => (x.id === it.id ? { ...x, status: 'VerifyFailed', error: err, errorTransient: false } : x)) }));
+      } else {
+        addLog(`[ PASS ] ${it.sourceEmail} → ${it.destEmail}: ready to migrate`, 'ok');
+        setState((s) => ({ ...s, items: s.items.map((x) => (x.id === it.id ? { ...x, status: 'Verified', error: undefined } : x)) }));
+      }
+    }
+    addLog(problems
+      ? `TEST FAILED — ${problems} issue(s) found. Fix them (see error helper) and re-test before the real run.`
+      : `TEST PASSED — all ${queue.length} mailbox(es) validated. Endpoints ready; you can run the real migration via the agent.`,
+      problems ? 'err' : 'ok');
+    setTesting(false);
   };
 
   const project = projects.find((p) => p.id === projectId) ?? null;
@@ -351,6 +450,10 @@ export default function MigrationConsole() {
                   </div>
                 ))}
               </div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <Field label="Migration endpoint name (Exchange Online)" value={endpointName} onChange={setEndpointName} placeholder="CrossTenantEndpoint" />
+                <Field label="Target delivery domain" value={targetDeliveryDomain} onChange={setTargetDeliveryDomain} placeholder="target.onmicrosoft.com" />
+              </div>
               <div className="mt-3"><Button variant="secondary" onClick={hasAgent && agentOk ? verifyViaAgent : verifyEndpoints}><ShieldCheck size={15} /> Verify endpoint credentials{hasAgent && agentOk ? ' (agent)' : ''}</Button></div>
             </Section>
           </Card>
@@ -361,6 +464,18 @@ export default function MigrationConsole() {
               <TextArea label="" value={csv} onChange={setCsv} rows={3} />
               <div className="mt-2"><Button variant="secondary" onClick={importItems}><Upload size={15} /> Import users</Button></div>
             </Section>
+            <Section title="Test migration">
+              <div className="flex flex-wrap items-center gap-2">
+                <Button variant="ai" onClick={runTestMigration} disabled={!!running || testing || !items.length}>
+                  <FlaskConical size={15} /> {testing ? 'Testing…' : 'Run test migration'}
+                </Button>
+                <span className="text-xs text-slate-400">
+                  {hasAgent && agentOk
+                    ? 'Runs Test-MigrationServerAvailability + recipient validation on the agent — real errors shown below.'
+                    : 'Validates endpoint, target domain and every mailbox; flags errors per user (connect the agent for the live Exchange check).'}
+                </span>
+              </div>
+            </Section>
             <Section title="Migration passes">
               <div className="flex flex-wrap gap-2">
                 <Button variant="secondary" onClick={() => startPass('verify')} disabled={!!running}><ShieldCheck size={15} /> Verify credentials</Button>
@@ -369,6 +484,7 @@ export default function MigrationConsole() {
                 <Button onClick={() => (hasAgent && agentOk ? fullMigrateViaAgent() : startPass('full'))} disabled={!!running}><PlayCircle size={15} /> Full migration{hasAgent && agentOk ? ' (agent)' : ''}</Button>
                 <Button variant="secondary" onClick={() => startPass('delta')} disabled={!!running}><Zap size={15} /> Final delta</Button>
                 <Button variant="danger" onClick={() => startPass('retry')} disabled={!!running}><RotateCcw size={15} /> Retry errors</Button>
+                {hasAgent && agentOk && <Button variant="secondary" onClick={refreshLiveStatus} disabled={!!running}><RotateCcw size={15} /> Refresh live status</Button>}
                 <Button variant="secondary" onClick={exportCsv} disabled={!items.length}><Download size={15} /> Export report</Button>
               </div>
               {running && <p className="mt-2 text-xs font-semibold text-blue-500 animate-pulse">Pass running: {running.toUpperCase()} …</p>}

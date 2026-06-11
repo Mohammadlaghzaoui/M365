@@ -11,8 +11,25 @@ export interface AgentHealth {
   name: string;
   version: string;
   host: string;
-  capabilities: { powershell: boolean; graph: boolean; modules: string[] };
+  capabilities: { powershell: boolean; graph: boolean; exchangeOnline?: boolean; modules: string[] };
   time: string;
+}
+
+export interface MigrationParams {
+  batchName: string;
+  endpointName: string;
+  targetDeliveryDomain: string;
+  users: { source: string; destination: string }[];
+  script?: string;
+}
+
+export interface BatchUserStat {
+  identity: string;
+  status: string;
+  percent: number;
+  synced: number;
+  skipped: number;
+  error: string;
 }
 
 export interface AgentJob {
@@ -65,8 +82,16 @@ export async function startProvision(payload: unknown): Promise<{ jobId: string 
   return call('POST', '/provision/user', payload);
 }
 
-export async function startMigration(payload: unknown): Promise<{ jobId: string }> {
+export async function startMigration(payload: MigrationParams): Promise<{ jobId: string }> {
   return call('POST', '/migrate/start', payload);
+}
+
+export async function testMigration(payload: MigrationParams): Promise<{ jobId: string }> {
+  return call('POST', '/migrate/test', payload);
+}
+
+export async function getBatchStatus(batchName: string): Promise<{ batchName: string; users: BatchUserStat[] }> {
+  return call('POST', '/migrate/status', { batchName });
 }
 
 export async function getJob(id: string): Promise<AgentJob> {

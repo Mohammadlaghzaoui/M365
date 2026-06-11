@@ -7,6 +7,7 @@ import { config } from './config.js';
 import { runPowerShell, psAvailable } from './powershell.js';
 import { graphRequest, graphConfigured } from './graph.js';
 import { jobs, createJob, runJob } from './jobs.js';
+import { getBatchStatus, exoConfigured } from './exchange.js';
 
 const app = express();
 app.use(express.json({ limit: '5mb' }));
@@ -45,6 +46,7 @@ app.get('/health', async (_req, res) => {
     capabilities: {
       powershell: await psAvailable(),
       graph: graphConfigured(),
+      exchangeOnline: exoConfigured(),
       modules: config.declaredModules,
     },
     time: new Date().toISOString(),
@@ -85,6 +87,25 @@ app.post('/migrate/start', async (req, res) => {
   const job = createJob('migrate-batch', req.body);
   res.status(202).json({ jobId: job.id });
   runJob(job).catch(() => {});
+});
+
+// ---- Test migration (validate endpoint + recipients, surface errors) ----
+app.post('/migrate/test', async (req, res) => {
+  const job = createJob('migrate-test', req.body);
+  res.status(202).json({ jobId: job.id });
+  runJob(job).catch(() => {});
+});
+
+// ---- Poll live per-user migration statistics for a batch ----
+app.post('/migrate/status', async (req, res) => {
+  const { batchName } = req.body ?? {};
+  if (!batchName) return res.status(400).json({ error: 'batchName required.' });
+  try {
+    const stats = await getBatchStatus(batchName);
+    res.json({ batchName, users: stats });
+  } catch (e) {
+    res.status(502).json({ error: String(e.message ?? e) });
+  }
 });
 
 // ---- Run an arbitrary, allow-listed PowerShell task (operator-authored) ----
