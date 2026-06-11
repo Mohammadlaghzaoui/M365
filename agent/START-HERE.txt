@@ -1,0 +1,45 @@
+WORKPILOT AGENT — RUN LOCALLY ON YOUR PC
+=========================================
+
+This package contains the WorkPilot Migration Agent (and, in the all-in-one
+build, the portal too). Start it once and the portal can execute real
+migrations, validations and provisioning through your PC (AD / Exchange /
+Microsoft Graph).
+
+STEP 1 — Install Node.js (one time)
+   Download and install Node.js 18 or later: https://nodejs.org
+   (choose "LTS"). Done.
+
+STEP 2 — Start
+   Double-click:  start.bat
+   - The first run installs the components once (please wait).
+   - The agent then runs on http://localhost:8787
+   - All-in-one build: your browser opens the portal automatically.
+
+STEP 3 — Connect the portal to your agent
+   In the portal: Settings -> Integrations -> WorkPilot Migration Agent
+     - URL:      http://localhost:8787
+     - API key:  workpilot-local-key   (or whatever you set in .env)
+   Click "Test agent connection". You'll see whether PowerShell, Exchange
+   Online and Graph are available.
+
+STEP 4 (optional) — Cloud actions via Microsoft Graph
+   To actually create cloud accounts / send invitations:
+   open .env and fill in: TENANT_ID, CLIENT_ID, CLIENT_SECRET
+   (Entra app registration with application permissions + admin consent:
+    User.ReadWrite.All, User.Invite.All, Group.ReadWrite.All)
+
+STEP 5 (optional) — Exchange Online execution (migration batches)
+   Install the module once in PowerShell:  Install-Module ExchangeOnlineManagement
+   Unattended auth (recommended): fill in .env:
+     EXO_APP_ID, EXO_ORG (tenant.onmicrosoft.com), EXO_CERT_THUMBPRINT
+   Or sign in interactively once in the agent window — the session is reused.
+
+STOP
+   Just close the black window.
+
+NOTES
+   - On-prem AD/Exchange actions only work if this PC has access
+     (domain-joined, the right PowerShell modules, a delegated account).
+   - Only you can reach http://localhost:8787 on this PC. To share it or
+     run it on a server, see DEPLOYMENT.md in the repository.

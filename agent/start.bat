@@ -4,27 +4,27 @@ title WorkPilot Agent
 cd /d "%~dp0"
 
 echo ============================================
-echo   WorkPilot Agent  -  lokaal op deze PC
+echo   WorkPilot Agent  -  local on this PC
 echo ============================================
 echo.
 
 where node >nul 2>nul
 if errorlevel 1 (
-  echo [FOUT] Node.js is niet gevonden.
-  echo Installeer Node.js 18+ van https://nodejs.org en start dit opnieuw.
+  echo [ERROR] Node.js was not found.
+  echo Install Node.js 18+ from https://nodejs.org and run this again.
   echo.
   pause
   exit /b 1
 )
 
 if not exist "node_modules" (
-  echo Eenmalig: onderdelen installeren... (even wachten^)
+  echo First run: installing components... (please wait^)
   call npm install --omit=dev
   echo.
 )
 
 if not exist ".env" (
-  echo Eerste keer: .env aanmaken...
+  echo First run: creating .env...
   > .env echo PORT=8787
   >> .env echo AGENT_API_KEY=workpilot-local-key
   >> .env echo ALLOWED_ORIGINS=https://sorrento.cloud,https://mohammadlaghzaoui.github.io
@@ -35,15 +35,15 @@ if not exist ".env" (
 )
 
 echo ----------------------------------------------------------
-echo   Agent draait straks op:  http://localhost:8787
-echo   API-sleutel:             workpilot-local-key
+echo   Agent will run on:   http://localhost:8787
+echo   API key:             workpilot-local-key
 echo.
-echo   Vul deze in op de portal (sorrento.cloud):
+echo   Enter these in the portal (sorrento.cloud):
 echo      Settings ^> Integrations ^> Migration Agent
 echo        URL     = http://localhost:8787
 echo        API key = workpilot-local-key
 echo.
-echo   Laat dit venster open. Sluiten = agent stoppen.
+echo   Keep this window open. Closing it stops the agent.
 echo ----------------------------------------------------------
 echo.
 
