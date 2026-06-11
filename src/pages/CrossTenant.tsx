@@ -1,6 +1,8 @@
-import { useRef, useState } from 'react';
-import { ArrowLeftRight, AlertTriangle, CheckCircle2, XCircle, AlertCircle, PlayCircle, Rocket, Sparkles, Loader2 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { ArrowLeftRight, AlertTriangle, CheckCircle2, XCircle, AlertCircle, PlayCircle, Rocket, Sparkles, Loader2, Cpu, Radio } from 'lucide-react';
 import { PSConsole, buildConsoleScript, ConsoleLine } from '../components/PSConsole';
+import { agentConfigured, agentHealth, testMigration, trackJob } from '../services/agent';
+import { parseUsers } from '../services/migrationRunner';
 import { Badge, Button, Card, CodeBlock, Field, PageHeader, Section, TextArea, TextOutput } from '../components/ui';
 import { CT_DEFAULTS, CTForm, ctAdminConsentUrl, ctErrors, ctPostMigration, ctRollbackNotes, ctScripts, ctSourceSteps, ctTargetSteps, ctValidationChecklist, ctWarnings } from '../data/crossTenant';
 import { runValidation, RunResult, buildRunbook, aiAnalysisPrompt } from '../services/migrationRunner';
@@ -22,6 +24,52 @@ export default function CrossTenant() {
   const [selectedError, setSelectedError] = useState(ctErrors[0].id);
   const [consoleLines, setConsoleLines] = useState<ConsoleLine[] | null>(null);
   const pendingResult = useRef<RunResult | null>(null);
+  const hasAgent = agentConfigured();
+  const [agentOk, setAgentOk] = useState<boolean | null>(null);
+  const [liveLines, setLiveLines] = useState<{ text: string; type: 'info' | 'ok' | 'warn' | 'err' }[]>([]);
+  const [liveRunning, setLiveRunning] = useState(false);
+  const [livePassed, setLivePassed] = useState<boolean | null>(null);
+  const liveLogRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!hasAgent) return;
+    agentHealth().then(() => setAgentOk(true)).catch(() => setAgentOk(false));
+  }, [hasAgent]);
+
+  useEffect(() => { liveLogRef.current?.scrollTo({ top: liveLogRef.current.scrollHeight }); }, [liveLines]);
+
+  const addLive = (text: string, type: 'info' | 'ok' | 'warn' | 'err' = 'info') =>
+    setLiveLines((prev) => [...prev.slice(-400), { text: `[${new Date().toLocaleTimeString('en-GB')}] ${text}`, type }]);
+
+  // LIVE validation: real Exchange Online checks via the agent on this machine.
+  const runLiveValidation = async () => {
+    if (liveRunning) return;
+    setLiveLines([]);
+    setLivePassed(null);
+    setLiveRunning(true);
+    addLive(`Submitting LIVE cross-tenant validation to the agent (endpoint "${form.endpointName}") ...`, 'info');
+    try {
+      const users = parseUsers(form.csvUsers).map((u) => ({ source: u, destination: u }));
+      const { jobId } = await testMigration({
+        batchName: `ct-live-${Date.now().toString(36)}`,
+        endpointName: form.endpointName,
+        targetDeliveryDomain: form.targetDeliveryDomain,
+        users,
+        crossTenant: true,
+      });
+      addLive(`Agent job ${jobId} accepted — streaming real Exchange Online output ...`, 'info');
+      const job = await trackJob(jobId, (l) =>
+        addLive(l.text, l.level === 'err' ? 'err' : l.level === 'warn' ? 'warn' : l.level === 'ok' ? 'ok' : 'info'));
+      const ok = job.status === 'completed';
+      setLivePassed(ok);
+      addLive(ok ? 'LIVE VALIDATION PASSED — tenants are genuinely ready for this batch.' : `LIVE VALIDATION FAILED — ${job.error ?? 'see lines above'}.`, ok ? 'ok' : 'err');
+    } catch (e) {
+      setLivePassed(false);
+      addLive(`Agent error: ${e instanceof Error ? e.message : e}`, 'err');
+    } finally {
+      setLiveRunning(false);
+    }
+  };
 
   const set = (k: keyof CTForm, v: string) => setForm((f) => ({ ...f, [k]: v }));
   const scripts = ctScripts(form);
@@ -129,6 +177,44 @@ export default function CrossTenant() {
               </div>
               <Button variant="ai" onClick={runTest}><PlayCircle size={16} /> Run test migration</Button>
             </div>
+          </Card>
+
+          {/* LIVE validation via agent — real Exchange Online checks */}
+          <Card className={`p-5 ${agentOk ? (livePassed === true ? 'border-emerald-300 dark:border-emerald-700' : livePassed === false ? 'border-red-300 dark:border-red-700' : 'border-blue-300 dark:border-blue-700') : 'opacity-80'}`}>
+            <div className="flex flex-wrap items-center gap-3">
+              <span className={`rounded-lg p-2 ${agentOk ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600' : 'bg-slate-100 dark:bg-slate-700 text-slate-400'}`}><Radio size={18} /></span>
+              <div className="flex-1 min-w-64">
+                <h3 className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                  LIVE validation — real Exchange Online
+                  {livePassed === true && <Badge color="green">PASSED</Badge>}
+                  {livePassed === false && <Badge color="red">FAILED</Badge>}
+                </h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400">
+                  {agentOk
+                    ? 'Runs the REAL checks via your agent: organization relationship, Get-MigrationEndpoint + Test-MigrationServerAvailability, and per user Get-MailUser ExchangeGuid/targetAddress in the target tenant. Read-only — nothing is migrated.'
+                    : hasAgent
+                      ? 'Agent configured but unreachable — start it on your PC (start.bat) and refresh.'
+                      : <>Connect the <a href="#/agent" className="text-blue-500 hover:underline">Migration Agent</a> to run this validation for real against your tenants.</>}
+                </p>
+              </div>
+              <Button onClick={runLiveValidation} disabled={!agentOk || liveRunning}>
+                {liveRunning ? <Loader2 size={16} className="animate-spin" /> : <Cpu size={16} />} Run LIVE validation
+              </Button>
+            </div>
+            {liveLines.length > 0 && (
+              <div className="mt-4 overflow-hidden rounded-xl border border-slate-700 bg-[#012456]">
+                <div className="flex items-center gap-2 border-b border-slate-700 bg-slate-900 px-3 py-2">
+                  <span className="h-3 w-3 rounded-full bg-red-500" /><span className="h-3 w-3 rounded-full bg-amber-400" /><span className="h-3 w-3 rounded-full bg-emerald-500" />
+                  <span className="ml-2 text-xs font-medium text-slate-300">Exchange Online — live cross-tenant validation (agent)</span>
+                </div>
+                <div ref={liveLogRef} className="h-64 overflow-y-auto p-3 font-mono text-xs leading-relaxed">
+                  {liveLines.map((l, i) => (
+                    <div key={i} className={`whitespace-pre-wrap ${{ info: 'text-cyan-300', ok: 'text-emerald-400', warn: 'text-amber-300', err: 'text-red-400' }[l.type]}`}>{l.text}</div>
+                  ))}
+                  {liveRunning && <span className="inline-block h-3.5 w-2 animate-pulse bg-slate-200 align-middle" />}
+                </div>
+              </div>
+            )}
           </Card>
 
           {consoleLines && (

@@ -79,3 +79,53 @@ function parseJsonOutput(out) {
     return [];
   }
 }
+
+const escq = (s = '') => String(s).replace(/'/g, "''");
+
+/**
+ * Full cross-tenant readiness validation (read-only) for the target tenant:
+ * org relationship, migration endpoint reachability, and per-user MailUser /
+ * ExchangeGuid prerequisites. Streams human-readable PASS/FAIL lines.
+ */
+export function buildCrossTenantCheckScript(p) {
+  const users = (p.users || []).map((u) => u.destination || u.source);
+  const perUser = users.map((u) => `Try {
+  $r = Get-Recipient -Identity '${escq(u)}' -ErrorAction Stop
+  if ($r.RecipientTypeDetails -like '*MailUser*') {
+    $mu = Get-MailUser -Identity '${escq(u)}' -ErrorAction Stop
+    if ($mu.ExchangeGuid -and $mu.ExchangeGuid -ne [Guid]::Empty) {
+      Write-Output ('[ PASS ] ${escq(u)} -> MailUser, ExchangeGuid ' + $mu.ExchangeGuid)
+    } else {
+      Write-Output ('[ FAIL ] ${escq(u)} -> MissingExchangeGuidException: target MailUser has no ExchangeGuid stamped')
+    }
+    if (-not $mu.ExternalEmailAddress) { Write-Output ('[ WARN ] ${escq(u)} -> no ExternalEmailAddress (targetAddress) set') }
+  } elseif ($r.RecipientTypeDetails -like '*Mailbox*') {
+    Write-Output ('[ FAIL ] ${escq(u)} -> target already has a MAILBOX (' + $r.RecipientTypeDetails + ') — licensed too early, migration will fail')
+  } else {
+    Write-Output ('[ WARN ] ${escq(u)} -> unexpected recipient type ' + $r.RecipientTypeDetails)
+  }
+} Catch {
+  Write-Output ('[ FAIL ] ${escq(u)} -> recipient not found in target tenant: ' + $_.Exception.Message)
+}`).join('\n');
+
+  return `${connectBlock()}
+$ErrorActionPreference = 'Continue'
+Write-Output '== Organization relationship (mailbox move) =='
+$rels = Get-OrganizationRelationship | Where-Object { $_.MailboxMoveEnabled }
+if ($rels) { $rels | ForEach-Object { Write-Output ('[ PASS ] ' + $_.Name + ' — capability ' + $_.MailboxMoveCapability + ', domains: ' + ($_.DomainNames -join ',')) } }
+else { Write-Output '[ FAIL ] No organization relationship with MailboxMoveEnabled found in this tenant.' }
+Write-Output '== Migration endpoint =='
+$ep = Get-MigrationEndpoint -Identity '${escq(p.endpointName)}' -ErrorAction SilentlyContinue
+if ($ep) {
+  Write-Output ('[ PASS ] Endpoint "' + $ep.Identity + '" exists (' + $ep.EndpointType + ')')
+  Try {
+    $t = Test-MigrationServerAvailability -Endpoint '${escq(p.endpointName)}' ${users[0] ? `-TestMailbox '${escq(users[0])}'` : ''} -ErrorAction Stop
+    Write-Output ('[ ' + $(if ("$($t.Result)" -match 'Success') { 'PASS' } else { 'FAIL' }) + ' ] Test-MigrationServerAvailability: ' + $t.Result + ' ' + $t.Message)
+  } Catch { Write-Output ('[ FAIL ] Test-MigrationServerAvailability: ' + $_.Exception.Message) }
+} else {
+  Write-Output '[ FAIL ] Migration endpoint "${escq(p.endpointName)}" not found in the target tenant.'
+}
+Write-Output '== Per-user MailUser readiness (${users.length} users) =='
+${perUser}
+Write-Output '== Cross-tenant validation finished =='`;
+}

@@ -21,6 +21,8 @@ export interface MigrationParams {
   targetDeliveryDomain: string;
   users: { source: string; destination: string }[];
   script?: string;
+  /** true = run the read-only cross-tenant readiness validation instead of a generic test */
+  crossTenant?: boolean;
 }
 
 export interface BatchUserStat {

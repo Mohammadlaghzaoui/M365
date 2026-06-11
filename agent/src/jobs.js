@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { runPowerShell } from './powershell.js';
 import { graphRequest } from './graph.js';
 import { config } from './config.js';
-import { buildMigrationBatchScript, getBatchStatus, testEndpoint, exoConfigured } from './exchange.js';
+import { buildMigrationBatchScript, getBatchStatus, testEndpoint, exoConfigured, buildCrossTenantCheckScript } from './exchange.js';
 
 export const jobs = new Map();
 
@@ -116,6 +116,17 @@ async function migrateBatch(job) {
 // ---- Test migration: validate endpoint + dry-run a small batch, surface errors ----
 async function migrateTest(job) {
   const p = job.payload ?? {};
+  if (p.crossTenant) {
+    log(job, `CROSS-TENANT live validation for "${p.batchName}" — org relationship, endpoint, MailUser/ExchangeGuid per user ...`, 'info');
+    const out = await runPowerShell(buildCrossTenantCheckScript(p), {
+      onData: (l) => log(job, l, l.includes('[ FAIL ]') ? 'err' : l.includes('[ WARN ]') ? 'warn' : l.includes('[ PASS ]') ? 'ok' : 'info'),
+    });
+    const failed = (out.match(/\[ FAIL \]/g) || []).length;
+    job.result = { status: failed ? 'TestFailed' : 'TestPassed', failures: failed };
+    if (failed) throw new Error(`${failed} blocking issue(s) found in live cross-tenant validation.`);
+    log(job, 'Live cross-tenant validation PASSED.', 'ok');
+    return;
+  }
   log(job, `TEST migration for "${p.batchName}" — validating before any real move ...`, 'info');
   log(job, `Step 1/2: Test-MigrationServerAvailability on endpoint "${p.endpointName}" ...`, 'info');
   const testMailbox = (p.users || [])[0]?.source;
