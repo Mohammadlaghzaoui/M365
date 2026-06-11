@@ -8,6 +8,7 @@ import {
 import { load, save } from '../store/useLocalStorage';
 import { getBranding, getHiddenModules } from '../store/settings';
 import { Session, logout } from '../services/auth';
+import { getRole, roleLabel } from '../services/rbac';
 import { UserCircle2, LogOut, MonitorPlay, ChevronsLeft, ChevronsRight, Cpu, TriangleAlert } from 'lucide-react';
 import { LogoFull, LogoMark } from './Logo';
 
@@ -164,6 +165,7 @@ export function Layout({ session, onLogout }: { session: Session; onLogout: () =
             >
               <UserCircle2 size={15} className="text-emerald-500" />
               {session.email}
+              <span className="rounded-full bg-blue-100 dark:bg-blue-900/50 px-2 py-0.5 text-[10px] font-bold text-blue-700 dark:text-blue-300">{roleLabel(getRole(session.email))}</span>
             </button>
             <button
               onClick={() => { logout(); onLogout(); }}

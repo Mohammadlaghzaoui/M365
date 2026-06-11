@@ -61,6 +61,12 @@ async function call<T>(method: string, path: string, body?: unknown, withKey = t
   const a = cfg();
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   if (withKey) headers['x-api-key'] = a.apiKey;
+  // Operator identity for the server-side audit trail (informational; the
+  // agent's authorization is based on the key, not this header).
+  try {
+    const session = JSON.parse(localStorage.getItem('workpilot:session') ?? 'null');
+    if (session?.email) headers['x-operator'] = session.email;
+  } catch { /* no session */ }
   const res = await fetch(`${a.url.replace(/\/+$/, '')}${path}`, {
     method,
     headers,
@@ -94,6 +100,22 @@ export async function testMigration(payload: MigrationParams): Promise<{ jobId: 
 
 export async function getBatchStatus(batchName: string): Promise<{ batchName: string; users: BatchUserStat[] }> {
   return call('POST', '/migrate/status', { batchName });
+}
+
+export interface AuditEntry {
+  t: string;
+  actor?: string;
+  role?: string;
+  method?: string;
+  path?: string;
+  result?: string;
+  operator?: string;
+  ip?: string;
+}
+
+export async function getAuditLog(): Promise<AuditEntry[]> {
+  const data = await call<{ entries: AuditEntry[] }>('GET', '/audit');
+  return data.entries ?? [];
 }
 
 export async function getJob(id: string): Promise<AgentJob> {

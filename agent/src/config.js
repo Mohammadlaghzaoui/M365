@@ -27,6 +27,23 @@ export const config = {
     .map((s) => s.trim())
     .filter(Boolean),
 
+  /**
+   * RBAC: per-key roles, enforced SERVER-SIDE (the key IS the identity, so a
+   * tampered browser cannot escalate). Format:
+   *   AGENT_KEYS=longkey1:super_admin,longkey2:engineer,longkey3:read_only
+   * AGENT_API_KEY (if set) is implicitly super_admin for backwards compat.
+   * Roles: super_admin | architect | engineer | read_only
+   */
+  keys: (() => {
+    const map = new Map();
+    for (const pair of (process.env.AGENT_KEYS ?? '').split(',').map((s) => s.trim()).filter(Boolean)) {
+      const [key, role] = pair.split(':').map((s) => s.trim());
+      if (key && ['super_admin', 'architect', 'engineer', 'read_only'].includes(role)) map.set(key, role);
+    }
+    if (process.env.AGENT_API_KEY) map.set(process.env.AGENT_API_KEY, 'super_admin');
+    return map;
+  })(),
+
   // Microsoft Graph app-only (client credentials)
   tenantId: process.env.TENANT_ID ?? '',
   clientId: process.env.CLIENT_ID ?? '',

@@ -8,6 +8,7 @@ import { runPowerShell, psAvailable } from './powershell.js';
 import { graphRequest, graphConfigured } from './graph.js';
 import { jobs, createJob, runJob } from './jobs.js';
 import { getBatchStatus, exoConfigured } from './exchange.js';
+import { audit, readAudit } from './audit.js';
 
 const app = express();
 app.use(express.json({ limit: '5mb' }));
@@ -23,17 +24,50 @@ if (servesPortal) {
   app.use(express.static(publicDir));
 }
 
-const API_PREFIXES = ['/health', '/endpoints', '/provision', '/migrate', '/powershell', '/jobs'];
+const API_PREFIXES = ['/health', '/endpoints', '/provision', '/migrate', '/powershell', '/jobs', '/audit'];
 const isApi = (p) => API_PREFIXES.some((x) => p === x || p.startsWith(x + '/'));
 
-// ---- API key auth (every API route except /health) ----
+// ---- API key auth + RBAC (every API route except /health) ----
+// Role is resolved from the KEY server-side — a tampered browser cannot escalate.
+const ROLE_RANK = { read_only: 0, engineer: 1, architect: 2, super_admin: 3 };
+const minRoleFor = (method, p) => {
+  if (method === 'GET') return 'read_only';                       // health, jobs, audit gated below
+  if (p.startsWith('/powershell')) return 'super_admin';          // raw PS = highest bar
+  if (p === '/migrate/start' || p.startsWith('/provision')) return 'engineer'; // real changes
+  if (p === '/migrate/test' || p === '/migrate/status' || p.startsWith('/endpoints')) return 'engineer';
+  return 'super_admin';
+};
+
 app.use((req, res, next) => {
   if (!isApi(req.path) || req.path === '/health') return next();
-  const key = req.header('x-api-key');
-  if (!config.apiKey || key !== config.apiKey) {
+  const key = req.header('x-api-key') ?? '';
+  const role = config.keys.get(key);
+  if (!role) {
+    audit({ actor: 'unknown', role: null, method: req.method, path: req.path, result: 'denied:bad-key', ip: req.ip });
     return res.status(401).json({ error: 'Invalid or missing X-API-Key.' });
   }
+  const needed = req.path === '/audit' ? 'architect' : minRoleFor(req.method, req.path);
+  if (ROLE_RANK[role] < ROLE_RANK[needed]) {
+    audit({ actor: key.slice(0, 6) + '…', role, method: req.method, path: req.path, result: `denied:requires-${needed}`, ip: req.ip });
+    return res.status(403).json({ error: `Forbidden — this action requires the ${needed} role (your key has ${role}).` });
+  }
+  req.agentRole = role;
+  req.actor = key.slice(0, 6) + '…';
+  // Audit every state-changing call (GETs are noise; denials logged above).
+  if (req.method !== 'GET') {
+    audit({ actor: req.actor, role, method: req.method, path: req.path, result: 'allowed', operator: req.header('x-operator') ?? '', ip: req.ip });
+  }
   next();
+});
+
+// ---- Audit log (architect/super_admin) ----
+app.get('/audit', (req, res) => {
+  const key = req.header('x-api-key') ?? '';
+  const role = config.keys.get(key);
+  if (!role || ROLE_RANK[role] < ROLE_RANK.architect) {
+    return res.status(403).json({ error: 'Audit log requires architect or super_admin.' });
+  }
+  res.json({ entries: readAudit(200) });
 });
 
 // ---- Health / capabilities ----

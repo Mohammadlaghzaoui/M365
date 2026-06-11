@@ -19,10 +19,13 @@ import { testServiceNow } from '../services/servicenow';
 import { testJira, testZendesk, testTeamsWebhook, testSlackWebhook } from '../services/integrations';
 import { agentHealth } from '../services/agent';
 import { addUser, changePassword, getSession, listUsers, removeUser } from '../services/auth';
+import { getRole, setRole, can, ROLES, Role, roleLabel } from '../services/rbac';
+import { getAuditLog, agentConfigured, AuditEntry } from '../services/agent';
 import { load, save } from '../store/useLocalStorage';
 import { NAV } from '../components/Layout';
+import { ScrollText } from 'lucide-react';
 
-type Tab = 'ai' | 'sso' | 'integrations' | 'branding' | 'modules' | 'account' | 'data';
+type Tab = 'ai' | 'sso' | 'integrations' | 'branding' | 'modules' | 'account' | 'audit' | 'data';
 
 const tabs: { id: Tab; label: string; desc: string; icon: typeof Sparkles }[] = [
   { id: 'ai', label: 'AI Provider', desc: 'OpenRouter, OpenAI or Claude', icon: Sparkles },
@@ -31,8 +34,12 @@ const tabs: { id: Tab; label: string; desc: string; icon: typeof Sparkles }[] = 
   { id: 'branding', label: 'Branding', desc: 'Name, logo text, language', icon: Palette },
   { id: 'account', label: 'Account & Users', desc: 'Passwords and local users', icon: Users },
   { id: 'modules', label: 'Modules / Tabs', desc: 'Show or hide sidebar modules', icon: Blocks },
+  { id: 'audit', label: 'Audit Log', desc: 'Server-side action trail (agent)', icon: ScrollText },
   { id: 'data', label: 'Data', desc: 'Backup, import, reset', icon: Database },
 ];
+
+// Tabs that require admin capability — hidden for engineer/read-only roles.
+const ADMIN_TABS: Tab[] = ['ai', 'sso', 'integrations', 'branding', 'modules', 'data'];
 
 function TestBadge({ state, msg }: { state: 'idle' | 'testing' | 'ok' | 'fail'; msg: string }) {
   return (
@@ -62,7 +69,12 @@ function useTest(fn: () => Promise<string>) {
 }
 
 export default function Settings() {
-  const [tab, setTab] = useState<Tab>('ai');
+  const me = getSession()?.email;
+  const isAdmin = can(me, 'manage_settings');
+  const canAudit = can(me, 'view_audit');
+  const visibleTabs = tabs.filter((t) =>
+    (isAdmin || !ADMIN_TABS.includes(t.id)) && (t.id !== 'audit' || canAudit));
+  const [tab, setTab] = useState<Tab>(visibleTabs[0]?.id ?? 'account');
 
   return (
     <div className="max-w-6xl">
@@ -70,7 +82,7 @@ export default function Settings() {
       <div className="grid gap-6 lg:grid-cols-[250px_1fr]">
         {/* Vertical tab rail */}
         <div className="space-y-1.5 lg:sticky lg:top-20 lg:self-start">
-          {tabs.map((t) => (
+          {visibleTabs.map((t) => (
             <button key={t.id} onClick={() => setTab(t.id)}
               className={`flex w-full items-start gap-3 rounded-xl border p-3 text-left transition-colors ${tab === t.id ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-slate-200 dark:border-slate-700 hover:border-blue-300 dark:hover:border-blue-700'}`}>
               <span className={`rounded-lg p-2 ${tab === t.id ? 'bg-blue-600 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-300'}`}><t.icon size={16} /></span>
@@ -88,6 +100,7 @@ export default function Settings() {
           {tab === 'branding' && <BrandingCard />}
           {tab === 'account' && <AccountCard />}
           {tab === 'modules' && <ModulesCard />}
+          {tab === 'audit' && <AuditCard />}
           {tab === 'data' && <DataCard />}
         </div>
       </div>
@@ -576,13 +589,29 @@ function AccountCard() {
         <Section title="Local portal users">
           <div className="mb-3 space-y-1.5">
             {users.map((u) => (
-              <div key={u} className="flex items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm text-slate-700 dark:text-slate-200">
-                {u}
-                {u !== session?.email && users.length > 1 && (
+              <div key={u} className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm text-slate-700 dark:text-slate-200">
+                <span className="min-w-48">{u}</span>
+                {can(session?.email, 'manage_users') ? (
+                  <select
+                    value={getRole(u)}
+                    onChange={(e) => { setRole(u, e.target.value as Role); setUsers([...listUsers()]); }}
+                    disabled={u === session?.email}
+                    title={u === session?.email ? 'You cannot change your own role' : 'Assign role'}
+                    className="rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-2 py-1 text-xs"
+                  >
+                    {ROLES.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
+                  </select>
+                ) : (
+                  <Badge color="blue">{roleLabel(getRole(u))}</Badge>
+                )}
+                {u !== session?.email && users.length > 1 && can(session?.email, 'manage_users') && (
                   <button onClick={() => { try { removeUser(u); setUsers(listUsers()); } catch (e) { setMsg(String(e)); } }} className="ml-auto text-slate-400 hover:text-red-500"><Trash2 size={14} /></button>
                 )}
               </div>
             ))}
+          </div>
+          <div className="mb-3 rounded-lg bg-slate-50 dark:bg-slate-900 p-3 text-xs text-slate-500 dark:text-slate-400">
+            {ROLES.map((r) => <div key={r.id}><strong>{r.label}:</strong> {r.desc}</div>)}
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="New user email" value={newEmail} onChange={setNewEmail} placeholder="engineer@sorrento.cloud" />
@@ -713,6 +742,55 @@ function ModulesCard() {
           <button onClick={() => { setHidden([]); saveHiddenModules([]); }} className="mt-5 text-xs font-semibold text-blue-500 hover:underline">
             Show all modules ({hidden.length} hidden)
           </button>
+        )}
+      </Section>
+    </Card>
+  );
+}
+
+function AuditCard() {
+  const [entries, setEntries] = useState<AuditEntry[] | null>(null);
+  const [err, setErr] = useState('');
+  const hasAgent = agentConfigured();
+
+  const refresh = async () => {
+    setErr('');
+    try { setEntries(await getAuditLog()); }
+    catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+  };
+
+  useEffect(() => { if (hasAgent) refresh(); }, [hasAgent]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <Card className="p-5">
+      <Section title="Server-side audit log (agent host)" action={hasAgent ? <Button variant="secondary" onClick={refresh}>Refresh</Button> : undefined}>
+        <p className="mb-3 text-sm text-slate-500 dark:text-slate-400">
+          Every state-changing API call and every denied attempt is appended to <code className="rounded bg-slate-100 dark:bg-slate-700 px-1">audit.log</code> on the agent host — outside the browser, so it cannot be wiped from a client. Requires an architect or super_admin agent key.
+        </p>
+        {!hasAgent && <p className="text-sm text-amber-600 dark:text-amber-400">Connect the Migration Agent to view the server-side trail.</p>}
+        {err && <p className="text-sm text-red-500">{err}</p>}
+        {entries && entries.length === 0 && <p className="text-sm text-slate-400">No audit entries yet.</p>}
+        {entries && entries.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 dark:border-slate-700 text-left text-xs uppercase text-slate-400">
+                  <th className="py-2 pr-3">Time</th><th className="py-2 pr-3">Operator</th><th className="py-2 pr-3">Key / Role</th><th className="py-2 pr-3">Action</th><th className="py-2">Result</th>
+                </tr>
+              </thead>
+              <tbody>
+                {entries.map((e, i) => (
+                  <tr key={i} className="border-b border-slate-100 dark:border-slate-700/50">
+                    <td className="py-1.5 pr-3 whitespace-nowrap text-xs text-slate-400">{e.t ? new Date(e.t).toLocaleString() : ''}</td>
+                    <td className="py-1.5 pr-3 text-slate-600 dark:text-slate-300">{e.operator || '—'}</td>
+                    <td className="py-1.5 pr-3 text-xs text-slate-500">{e.actor} ({e.role ?? 'invalid'})</td>
+                    <td className="py-1.5 pr-3 font-mono text-xs text-slate-600 dark:text-slate-300">{e.method} {e.path}</td>
+                    <td className="py-1.5"><Badge color={e.result === 'allowed' ? 'green' : 'red'}>{e.result}</Badge></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </Section>
     </Card>
