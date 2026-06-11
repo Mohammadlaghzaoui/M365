@@ -6,6 +6,7 @@ import Tickets from './pages/Tickets';
 import { EntraAssistant, ExchangeAssistant, SharePointAssistant, TeamsAssistant, EdgeCasesAssistant } from './pages/Assistants';
 import Migration from './pages/Migration';
 import MigrationConsole from './pages/MigrationConsole';
+import GpoAdvisor from './pages/GpoAdvisor';
 import Agent from './pages/Agent';
 import CrossTenant from './pages/CrossTenant';
 import Hybrid from './pages/Hybrid';
@@ -44,6 +45,7 @@ export default function App() {
           <Route path="/teams" element={<TeamsAssistant />} />
           <Route path="/migration" element={<Migration />} />
           <Route path="/migration-console" element={<MigrationConsole />} />
+          <Route path="/gpo-advisor" element={<GpoAdvisor />} />
           <Route path="/agent" element={<Agent />} />
           <Route path="/edge-cases" element={<EdgeCasesAssistant />} />
           <Route path="/cross-tenant" element={<CrossTenant />} />

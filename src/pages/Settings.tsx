@@ -10,6 +10,7 @@ import {
   getServiceNowSettings, saveServiceNowSettings, getBranding, saveBranding, BrandingSettings,
   getIntegrations, saveIntegrations, IntegrationSettings, integrationStatus,
   getGoogleSSO, saveGoogleSSO, GoogleSSOSettings,
+  getHiddenModules, saveHiddenModules,
 } from '../store/settings';
 import { testConnection } from '../services/ai';
 import { signIn, signOut, currentAccount } from '../services/sso';
@@ -19,8 +20,9 @@ import { testJira, testZendesk, testTeamsWebhook, testSlackWebhook } from '../se
 import { agentHealth } from '../services/agent';
 import { addUser, changePassword, getSession, listUsers, removeUser } from '../services/auth';
 import { load, save } from '../store/useLocalStorage';
+import { NAV } from '../components/Layout';
 
-type Tab = 'ai' | 'sso' | 'integrations' | 'branding' | 'account' | 'data';
+type Tab = 'ai' | 'sso' | 'integrations' | 'branding' | 'modules' | 'account' | 'data';
 
 const tabs: { id: Tab; label: string; desc: string; icon: typeof Sparkles }[] = [
   { id: 'ai', label: 'AI Provider', desc: 'OpenRouter, OpenAI or Claude', icon: Sparkles },
@@ -28,6 +30,7 @@ const tabs: { id: Tab; label: string; desc: string; icon: typeof Sparkles }[] = 
   { id: 'integrations', label: 'Integrations', desc: 'AD, ITSM, PSA, webhooks', icon: Blocks },
   { id: 'branding', label: 'Branding', desc: 'Name, logo text, language', icon: Palette },
   { id: 'account', label: 'Account & Users', desc: 'Passwords and local users', icon: Users },
+  { id: 'modules', label: 'Modules / Tabs', desc: 'Show or hide sidebar modules', icon: Blocks },
   { id: 'data', label: 'Data', desc: 'Backup, import, reset', icon: Database },
 ];
 
@@ -84,6 +87,7 @@ export default function Settings() {
           {tab === 'integrations' && <IntegrationsTab />}
           {tab === 'branding' && <BrandingCard />}
           {tab === 'account' && <AccountCard />}
+          {tab === 'modules' && <ModulesCard />}
           {tab === 'data' && <DataCard />}
         </div>
       </div>
@@ -649,6 +653,67 @@ function DataCard() {
           <input ref={fileRef} type="file" accept="application/json" className="hidden" onChange={(e) => e.target.files?.[0] && importData(e.target.files[0])} />
         </div>
         {msg && <p className="mt-3 text-xs text-slate-500">{msg}</p>}
+      </Section>
+    </Card>
+  );
+}
+
+function ModulesCard() {
+  const [hidden, setHidden] = useState<string[]>(() => getHiddenModules());
+  const groups = ['Helpdesk', 'Migration', 'Operations', 'Tools', 'Reference'];
+
+  const toggle = (route: string) => {
+    const next = hidden.includes(route) ? hidden.filter((r) => r !== route) : [...hidden, route];
+    setHidden(next);
+    saveHiddenModules(next);
+  };
+  const setGroup = (group: string, hide: boolean) => {
+    const routes = NAV.filter((n) => n.group === group && n.to !== '/' && n.to !== '/settings').map((n) => n.to);
+    const next = hide ? Array.from(new Set([...hidden, ...routes])) : hidden.filter((r) => !routes.includes(r));
+    setHidden(next);
+    saveHiddenModules(next);
+  };
+
+  return (
+    <Card className="p-5">
+      <Section title="Show or hide sidebar modules">
+        <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">
+          Tick the modules you want visible in the left navigation. Hidden modules disappear from the sidebar and search (Dashboard and Settings always stay). Tailor the portal per engineer or per customer engagement.
+        </p>
+        <div className="space-y-5">
+          {groups.map((group) => {
+            const items = NAV.filter((n) => n.group === group && n.to !== '/' && n.to !== '/settings');
+            if (!items.length) return null;
+            const allHidden = items.every((n) => hidden.includes(n.to));
+            return (
+              <div key={group}>
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-400">{group}</span>
+                  <button onClick={() => setGroup(group, !allHidden)} className="text-xs font-semibold text-blue-500 hover:underline">
+                    {allHidden ? 'Show all' : 'Hide all'}
+                  </button>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {items.map((n) => {
+                    const visible = !hidden.includes(n.to);
+                    return (
+                      <label key={n.to} className={`flex cursor-pointer items-center gap-2.5 rounded-lg border p-2.5 text-sm ${visible ? 'border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-900/10' : 'border-slate-200 dark:border-slate-700 opacity-60'}`}>
+                        <input type="checkbox" checked={visible} onChange={() => toggle(n.to)} className="h-4 w-4 rounded border-slate-300 text-blue-600" />
+                        <n.icon size={15} className="text-slate-500 dark:text-slate-400" />
+                        <span className="text-slate-700 dark:text-slate-200">{n.label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        {hidden.length > 0 && (
+          <button onClick={() => { setHidden([]); saveHiddenModules([]); }} className="mt-5 text-xs font-semibold text-blue-500 hover:underline">
+            Show all modules ({hidden.length} hidden)
+          </button>
+        )}
       </Section>
     </Card>
   );

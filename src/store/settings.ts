@@ -91,6 +91,17 @@ export function saveBranding(b: BrandingSettings) {
   save('branding', b);
 }
 
+// ---------- Module visibility (hide/show sidebar tabs) ----------
+export function getHiddenModules(): string[] {
+  return load<string[]>('hidden-modules', []);
+}
+
+export function saveHiddenModules(routes: string[]) {
+  save('hidden-modules', routes);
+  // Notify the layout in the same tab (storage event only fires cross-tab).
+  window.dispatchEvent(new Event('workpilot:modules-changed'));
+}
+
 // ---------- Extra integrations ----------
 export interface IntegrationSettings {
   jira: { enabled: boolean; baseUrl: string; email: string; apiToken: string; projectKey: string };

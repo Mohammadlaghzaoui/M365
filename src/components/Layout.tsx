@@ -6,7 +6,7 @@ import {
   ShieldCheck, StickyNote, Sun, Terminal, Ticket, Users, Workflow as WorkflowIcon, X, FolderKanban, Send,
 } from 'lucide-react';
 import { load, save } from '../store/useLocalStorage';
-import { getBranding } from '../store/settings';
+import { getBranding, getHiddenModules } from '../store/settings';
 import { Session, logout } from '../services/auth';
 import { UserCircle2, LogOut, MonitorPlay, ChevronsLeft, ChevronsRight, Cpu, TriangleAlert } from 'lucide-react';
 import { LogoFull, LogoMark } from './Logo';
@@ -20,6 +20,7 @@ export const NAV = [
   { to: '/teams', label: 'Microsoft Teams', icon: Users, group: 'Helpdesk' },
   { to: '/migration', label: 'Migration Projects', icon: FolderKanban, group: 'Migration' },
   { to: '/migration-console', label: 'Migration Console', icon: MonitorPlay, group: 'Migration' },
+  { to: '/gpo-advisor', label: 'GPO → Intune Advisor', icon: FileText, group: 'Migration' },
   { to: '/agent', label: 'Migration Agent', icon: Cpu, group: 'Migration' },
   { to: '/edge-cases', label: 'Migration Edge Cases', icon: TriangleAlert, group: 'Migration' },
   { to: '/cross-tenant', label: 'Cross-Tenant Migration', icon: ArrowLeftRight, group: 'Migration' },
@@ -46,8 +47,22 @@ export function Layout({ session, onLogout }: { session: Session; onLogout: () =
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(() => load('sidebar-collapsed', false));
   const [query, setQuery] = useState('');
+  const [hidden, setHidden] = useState<string[]>(() => getHiddenModules());
   const branding = getBranding();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    const refresh = () => setHidden(getHiddenModules());
+    window.addEventListener('workpilot:modules-changed', refresh);
+    window.addEventListener('storage', refresh);
+    return () => {
+      window.removeEventListener('workpilot:modules-changed', refresh);
+      window.removeEventListener('storage', refresh);
+    };
+  }, []);
+
+  // Settings and Dashboard can never be hidden (you'd lock yourself out).
+  const visibleNav = useMemo(() => NAV.filter((n) => n.to === '/' || n.to === '/settings' || !hidden.includes(n.to)), [hidden]);
 
   const toggleCollapsed = () => {
     setCollapsed((c: boolean) => { save('sidebar-collapsed', !c); return !c; });
@@ -61,7 +76,7 @@ export function Layout({ session, onLogout }: { session: Session; onLogout: () =
   const results = useMemo(() => {
     if (!query.trim()) return [];
     const q = query.toLowerCase();
-    return NAV.filter((n) => n.label.toLowerCase().includes(q)).slice(0, 6);
+    return visibleNav.filter((n) => n.label.toLowerCase().includes(q)).slice(0, 6);
   }, [query]);
 
   return (
@@ -82,7 +97,7 @@ export function Layout({ session, onLogout }: { session: Session; onLogout: () =
             <div key={group} className="mb-3">
               {!collapsed && <div className="mb-1 px-3 text-[10px] font-bold uppercase tracking-wider text-slate-400">{group}</div>}
               {collapsed && <div className="mx-2 mb-2 border-t border-slate-100 dark:border-slate-700/60 first:hidden" />}
-              {NAV.filter((n) => n.group === group).map((n) => (
+              {visibleNav.filter((n) => n.group === group).map((n) => (
                 <NavLink
                   key={n.to}
                   to={n.to}
