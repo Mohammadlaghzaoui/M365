@@ -3,6 +3,7 @@ import { runPowerShell } from './powershell.js';
 import { graphRequest } from './graph.js';
 import { config } from './config.js';
 import { buildMigrationBatchScript, getBatchStatus, testEndpoint, exoConfigured, buildCrossTenantCheckScript } from './exchange.js';
+import { psLit, validate, optional, ValidationError } from './security.js';
 
 export const jobs = new Map();
 
@@ -46,6 +47,9 @@ export async function runJob(job) {
     log(job, `Job failed: ${job.error}`, 'err');
   } finally {
     job.finishedAt = new Date().toISOString();
+    // Scrub the input payload from memory once the job is done — it may have
+    // held identifiers/secrets. Results/logs (already sanitised) are retained.
+    job.payload = undefined;
   }
 }
 
@@ -53,18 +57,24 @@ export async function runJob(job) {
 async function provisionUser(job) {
   const p = job.payload ?? {};
   if (p.accountType === 'Internal') {
-    log(job, `Creating on-prem AD user ${p.upn} in ${p.ou ?? '(default OU)'} ...`, 'info');
-    const script = p.script || buildAdScript(p);
+    const upn = validate(p.upn, 'upn', 'upn');
+    log(job, `Creating on-prem AD user ${upn} in ${p.ou ?? '(default OU)'} ...`, 'info');
+    // SECURITY: never run a client-supplied script here. The agent builds the
+    // command itself from validated parameters (see /powershell/run for the
+    // explicitly-gated raw path).
+    const script = buildAdScript(p);
     await runPowerShell(script, { onData: (l) => log(job, l) });
     log(job, 'AD object created. Triggering Entra Connect delta sync ...', 'info');
     if (p.entraConnectServer) {
-      await runPowerShell(`Invoke-Command -ComputerName ${p.entraConnectServer} -ScriptBlock { Start-ADSyncSyncCycle -PolicyType Delta }`, { onData: (l) => log(job, l) }).catch((e) => log(job, `Sync trigger warning: ${e.message}`, 'warn'));
+      const server = validate(p.entraConnectServer, 'domain', 'entraConnectServer');
+      await runPowerShell(`Invoke-Command -ComputerName ${psLit(server)} -ScriptBlock { Start-ADSyncSyncCycle -PolicyType Delta }`, { onData: (l) => log(job, l) }).catch((e) => log(job, `Sync trigger warning: ${e.message}`, 'warn'));
     }
     job.result = { status: 'PendingSync', upn: p.upn };
   } else if (p.accountType === 'Guest') {
-    log(job, `Sending B2B invitation to ${p.mail} via Graph ...`, 'info');
+    const mail = validate(p.mail, 'email', 'mail');
+    log(job, `Sending B2B invitation to ${mail} via Graph ...`, 'info');
     const inv = await graphRequest('POST', '/invitations', {
-      invitedUserEmailAddress: p.mail,
+      invitedUserEmailAddress: mail,
       invitedUserDisplayName: p.displayName,
       inviteRedirectUrl: p.redirectUrl || 'https://myapps.microsoft.com',
       sendInvitationMessage: true,
@@ -72,16 +82,18 @@ async function provisionUser(job) {
     job.result = { status: 'Invited', objectId: inv.invitedUser?.id, redeemUrl: inv.inviteRedeemUrl };
     log(job, `Invitation sent (objectId ${inv.invitedUser?.id}).`, 'ok');
   } else {
-    log(job, `Creating cloud member ${p.upn} via Graph ...`, 'info');
+    const upn = validate(p.upn, 'upn', 'upn');
+    log(job, `Creating cloud member ${upn} via Graph ...`, 'info');
     const user = await graphRequest('POST', '/users', {
       accountEnabled: true,
-      displayName: p.displayName,
-      givenName: p.firstName,
-      surname: p.lastName,
-      mailNickname: p.upnPrefix,
-      userPrincipalName: p.upn,
+      displayName: validate(p.displayName, 'name', 'displayName'),
+      givenName: validate(p.firstName, 'name', 'firstName'),
+      surname: validate(p.lastName, 'name', 'lastName'),
+      mailNickname: validate(p.upnPrefix, 'samlike', 'upnPrefix'),
+      userPrincipalName: upn,
       userType: 'Member',
-      passwordProfile: { password: p.password, forceChangePasswordNextSignIn: true },
+      // Password is generated on the host, never accepted from the client.
+      passwordProfile: { password: generatePassword(), forceChangePasswordNextSignIn: true },
     });
     job.result = { status: 'Created', objectId: user.id, upn: user.userPrincipalName };
     log(job, `User created (objectId ${user.id}).`, 'ok');
@@ -89,12 +101,30 @@ async function provisionUser(job) {
 }
 
 function buildAdScript(p) {
-  const ou = p.ou || 'OU=Users,DC=domain,DC=local';
+  // Every value is validated against a strict allowlist and emitted as a
+  // single-quoted PS literal — no injection surface, no double-quoted strings.
+  const firstName = psLit(validate(p.firstName, 'name', 'firstName'));
+  const lastName = psLit(validate(p.lastName, 'name', 'lastName'));
+  const displayName = psLit(validate(p.displayName, 'name', 'displayName'));
+  const sam = psLit(validate(p.upnPrefix, 'samlike', 'upnPrefix'));
+  const upn = psLit(validate(p.upn, 'upn', 'upn'));
+  const mail = psLit(optional(p.mail, 'email', 'mail') || validate(p.upn, 'upn', 'upn'));
+  const ou = psLit(validate(p.ou || 'OU=Users,DC=domain,DC=local', 'dn', 'ou'));
+  // Password: never client-supplied. Generate a strong random one on the host.
+  const pw = generatePassword();
   return [
-    `$pw = ConvertTo-SecureString '${(p.password || 'TempP@ss!' + Math.random().toString(36).slice(2)).replace(/'/g, "''")}' -AsPlainText -Force`,
-    `New-ADUser -GivenName '${p.firstName}' -Surname '${p.lastName}' -Name '${p.displayName}' -DisplayName '${p.displayName}' -SamAccountName '${p.upnPrefix}' -UserPrincipalName '${p.upn}' -EmailAddress '${p.mail}' -Path '${ou}' -AccountPassword $pw -ChangePasswordAtLogon $true -Enabled $true`,
-    `Write-Output "Created ${p.upn}"`,
+    `$pw = ConvertTo-SecureString ${psLit(pw)} -AsPlainText -Force`,
+    `New-ADUser -GivenName ${firstName} -Surname ${lastName} -Name ${displayName} -DisplayName ${displayName} -SamAccountName ${sam} -UserPrincipalName ${upn} -EmailAddress ${mail} -Path ${ou} -AccountPassword $pw -ChangePasswordAtLogon $true -Enabled $true`,
+    `Write-Output ('Created ' + ${upn})`,
   ].join('\n');
+}
+
+function generatePassword() {
+  const chars = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  const bytes = randomUUID().replace(/-/g, '') + randomUUID().replace(/-/g, '');
+  let out = 'Wp!';
+  for (let i = 0; i < 16; i++) out += chars[parseInt(bytes[i], 16) % chars.length];
+  return out;
 }
 
 // ---- Mailbox migration batch (Exchange Online remote/cross-tenant move) ----
@@ -105,8 +135,9 @@ async function migrateBatch(job) {
   if (!exoConfigured()) {
     log(job, 'Exchange Online app-only auth is not configured (EXO_APP_ID/EXO_ORG/EXO_CERT_THUMBPRINT). Falling back to an interactive Connect-ExchangeOnline on the agent host.', 'warn');
   }
-  // Prefer an operator-supplied validated script; otherwise build it from params.
-  const script = p.script || buildMigrationBatchScript(p);
+  // SECURITY: the agent always builds the New-MigrationBatch command itself
+  // from validated parameters — a client-supplied "script" field is ignored.
+  const script = buildMigrationBatchScript(p);
   log(job, 'Connecting to Exchange Online and submitting the batch ...', 'info');
   const out = await runPowerShell(script, { onData: (l) => log(job, l) });
   job.result = { status: 'Submitted', batchName: p.batchName, output: out.slice(-4000) };
@@ -152,16 +183,25 @@ async function migrateTest(job) {
 }
 
 function buildRecipientCheckScript(p) {
-  const esc = (s = '') => String(s).replace(/'/g, "''");
-  const lines = (p.users || []).map((u) => `Try {
-  $r = Get-Recipient -Identity '${esc(u.destination || u.source)}' -ErrorAction Stop
-  Write-Output ("OK  ${esc(u.source)} -> " + $r.RecipientTypeDetails)
+  // Validate every address (the email pattern rejects shell/PS metacharacters),
+  // then emit via single-quoted literals + concatenation — no $() expansion.
+  const lines = (p.users || []).map((u) => {
+    const dst = validate(u.destination || u.source, 'email', 'destination');
+    const src = validate(u.source, 'email', 'source');
+    return `Try {
+  $r = Get-Recipient -Identity ${psLit(dst)} -ErrorAction Stop
+  Write-Output ('OK  ${src} -> ' + $r.RecipientTypeDetails)
 } Catch {
-  Write-Output ("ERR ${esc(u.source)} -> " + $_.Exception.Message)
-}`).join('\n');
+  Write-Output ('ERR ${src} -> ' + $_.Exception.Message)
+}`;
+  }).join('\n');
+  // EXO config values come from the trusted host .env, not the client.
+  const conn = exoConfigured()
+    ? `Connect-ExchangeOnline -AppId ${psLit(config.exoAppId)} -Organization ${psLit(config.exoOrg)} -CertificateThumbprint ${psLit(config.exoCertThumbprint)} -ShowBanner:$false -ErrorAction Stop`
+    : `Connect-ExchangeOnline -ShowBanner:$false -ErrorAction Stop`;
   return `Import-Module ExchangeOnlineManagement -ErrorAction Stop
 if (-not (Get-ConnectionInformation -ErrorAction SilentlyContinue)) {
-  ${exoConfigured() ? `Connect-ExchangeOnline -AppId '${esc(config.exoAppId)}' -Organization '${esc(config.exoOrg)}' -CertificateThumbprint '${esc(config.exoCertThumbprint)}' -ShowBanner:$false -ErrorAction Stop` : `Connect-ExchangeOnline -ShowBanner:$false -ErrorAction Stop`}
+  ${conn}
 }
 ${lines}`;
 }

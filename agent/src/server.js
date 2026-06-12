@@ -11,8 +11,32 @@ import { getBatchStatus, exoConfigured } from './exchange.js';
 import { audit, readAudit } from './audit.js';
 
 const app = express();
-app.use(express.json({ limit: '5mb' }));
+app.disable('x-powered-by');
+app.use(express.json({ limit: '2mb' }));
 app.use(cors({ origin: config.allowedOrigins.length ? config.allowedOrigins : true }));
+
+// Basic security headers (defence in depth; the agent is an API + optional SPA host).
+app.use((_req, res, next) => {
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('X-Frame-Options', 'DENY');
+  res.set('Referrer-Policy', 'no-referrer');
+  next();
+});
+
+// Simple in-memory rate limiter for failed auth (per IP) — slows key brute force.
+const authFails = new Map();
+function tooManyFails(ip) {
+  const rec = authFails.get(ip);
+  if (!rec) return false;
+  if (Date.now() > rec.until) { authFails.delete(ip); return false; }
+  return rec.count >= 10;
+}
+function recordFail(ip) {
+  const rec = authFails.get(ip) ?? { count: 0, until: 0 };
+  rec.count += 1;
+  rec.until = Date.now() + 60_000; // 1-minute rolling window
+  authFails.set(ip, rec);
+}
 
 // ---- Static portal hosting (all-in-one server mode) ----
 // If agent/public contains the built portal (npm run build:server in the repo
@@ -38,15 +62,24 @@ const minRoleFor = (method, p) => {
   return 'super_admin';
 };
 
+const JOB_PATHS = (p) => p === '/jobs' || p.startsWith('/jobs/');
+
 app.use((req, res, next) => {
   if (!isApi(req.path) || req.path === '/health') return next();
+  if (tooManyFails(req.ip)) {
+    return res.status(429).json({ error: 'Too many failed attempts. Try again in a minute.' });
+  }
   const key = req.header('x-api-key') ?? '';
   const role = config.keys.get(key);
   if (!role) {
+    recordFail(req.ip);
     audit({ actor: 'unknown', role: null, method: req.method, path: req.path, result: 'denied:bad-key', ip: req.ip });
     return res.status(401).json({ error: 'Invalid or missing X-API-Key.' });
   }
-  const needed = req.path === '/audit' ? 'architect' : minRoleFor(req.method, req.path);
+  // Job logs can contain operational detail — require engineer+ to read them.
+  const needed = req.path === '/audit' ? 'architect'
+    : (req.method === 'GET' && JOB_PATHS(req.path)) ? 'engineer'
+    : minRoleFor(req.method, req.path);
   if (ROLE_RANK[role] < ROLE_RANK[needed]) {
     audit({ actor: key.slice(0, 6) + '…', role, method: req.method, path: req.path, result: `denied:requires-${needed}`, ip: req.ip });
     return res.status(403).json({ error: `Forbidden — this action requires the ${needed} role (your key has ${role}).` });
@@ -202,11 +235,33 @@ if (servesPortal) {
   });
 }
 
-app.listen(config.port, () => {
+// Bind to loopback by default — the agent is exposed deliberately, not by accident.
+// Set HOST=0.0.0.0 to listen on all interfaces (only behind HTTPS/VPN).
+const host = process.env.HOST || '127.0.0.1';
+const networked = host !== '127.0.0.1' && host !== 'localhost';
+
+// Refuse to start exposed to the network with weak/no keys.
+const weakKeys = [...config.keys.keys()].filter((k) => k.length < 20 || /^(workpilot-local-key|change-me)/i.test(k));
+if (config.keys.size === 0) {
+  console.error('  [FATAL] No API key configured. Set AGENT_API_KEY (and optionally AGENT_KEYS).');
+  process.exit(1);
+}
+if (networked && weakKeys.length) {
+  console.error('  [FATAL] Refusing to bind to the network with a weak/default API key.');
+  console.error('          Use a random key of 20+ characters (e.g. `openssl rand -hex 24`).');
+  process.exit(1);
+}
+if (networked && !config.allowedOrigins.length) {
+  console.warn('  [warn] Listening on the network with no ALLOWED_ORIGINS restriction — set it to your portal URL.');
+}
+
+app.listen(config.port, host, () => {
   if (servesPortal) console.log(`\n  Portal UI served from ${publicDir}`);
-  console.log(`\n  WorkPilot Migration Agent listening on http://localhost:${config.port}`);
-  console.log(`  Host: ${config.hostname}`);
+  console.log(`\n  WorkPilot Migration Agent listening on http://${host}:${config.port}`);
+  console.log(`  Host: ${config.hostname}  (bind: ${host})`);
+  console.log(`  Keys/roles: ${[...config.keys.values()].join(', ') || 'none'}`);
   console.log(`  PowerShell: ${config.declaredModules.join(', ') || '(detected at runtime)'}`);
-  console.log(`  Graph app-auth: ${graphConfigured() ? 'configured' : 'NOT configured (set TENANT_ID/CLIENT_ID/CLIENT_SECRET)'}`);
+  console.log(`  Graph app-auth: ${graphConfigured() ? 'configured' : 'NOT configured'}`);
+  console.log(`  Raw PowerShell: ${config.allowRawPowerShell ? 'ENABLED (super_admin only)' : 'disabled'}`);
   console.log(`  Allowed portal origins: ${config.allowedOrigins.join(', ') || '(any)'}\n`);
 });

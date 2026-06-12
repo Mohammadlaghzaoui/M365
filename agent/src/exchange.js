@@ -1,5 +1,6 @@
 import { runPowerShell } from './powershell.js';
 import { config } from './config.js';
+import { validate, optional } from './security.js';
 
 /**
  * Exchange Online execution for the Migration Console.
@@ -32,27 +33,33 @@ const esc = (s = '') => String(s).replace(/'/g, "''");
 
 /** Build the New-MigrationBatch command from validated console parameters. */
 export function buildMigrationBatchScript(p) {
-  const csv = (p.users || []).map((u) => `${u.source}`).join('\n');
-  const csvData = `EmailAddress\n${csv}`;
+  const batchName = validate(p.batchName, 'label', 'batchName');
+  const endpointName = validate(p.endpointName, 'label', 'endpointName');
+  const tdd = validate(p.targetDeliveryDomain, 'domain', 'targetDeliveryDomain');
+  // Validate every CSV address so nothing untrusted reaches the script.
+  const addresses = (p.users || []).map((u) => validate(u.source, 'email', 'source address'));
+  // LITERAL here-string (@'...'@) — does NOT expand $() subexpressions.
+  const csvData = `EmailAddress\n${addresses.join('\n')}`;
   return `${connectBlock()}
 $ErrorActionPreference = 'Stop'
-$csv = @"
+$csv = @'
 ${csvData}
-"@
+'@
 $bytes = [System.Text.Encoding]::UTF8.GetBytes($csv)
-$existing = Get-MigrationBatch -Identity '${esc(p.batchName)}' -ErrorAction SilentlyContinue
-if ($existing) { Write-Output 'Batch already exists — resuming.'; Start-MigrationBatch -Identity '${esc(p.batchName)}' -ErrorAction SilentlyContinue }
+$existing = Get-MigrationBatch -Identity '${esc(batchName)}' -ErrorAction SilentlyContinue
+if ($existing) { Write-Output 'Batch already exists — resuming.'; Start-MigrationBatch -Identity '${esc(batchName)}' -ErrorAction SilentlyContinue }
 else {
-  New-MigrationBatch -Name '${esc(p.batchName)}' -SourceEndpoint '${esc(p.endpointName)}' -CSVData $bytes -TargetDeliveryDomain '${esc(p.targetDeliveryDomain)}' -AutoStart -ErrorAction Stop | Out-Null
+  New-MigrationBatch -Name '${esc(batchName)}' -SourceEndpoint '${esc(endpointName)}' -CSVData $bytes -TargetDeliveryDomain '${esc(tdd)}' -AutoStart -ErrorAction Stop | Out-Null
   Write-Output 'Batch created and started.'
 }
-Get-MigrationUser -BatchId '${esc(p.batchName)}' | Get-MigrationUserStatistics | Select-Object Identity,Status,PercentageComplete,SyncedItemCount,SkippedItemCount,Error | ConvertTo-Json -Depth 3 -Compress`;
+Get-MigrationUser -BatchId '${esc(batchName)}' | Get-MigrationUserStatistics | Select-Object Identity,Status,PercentageComplete,SyncedItemCount,SkippedItemCount,Error | ConvertTo-Json -Depth 3 -Compress`;
 }
 
 /** Status poll for a running batch — returns parsed per-user statistics. */
 export async function getBatchStatus(batchName, onData) {
+  const batch = validate(batchName, 'label', 'batchName');
   const script = `${connectBlock()}
-Get-MigrationUser -BatchId '${esc(batchName)}' -ErrorAction Stop | Get-MigrationUserStatistics |
+Get-MigrationUser -BatchId '${esc(batch)}' -ErrorAction Stop | Get-MigrationUserStatistics |
   Select-Object @{n='identity';e={$_.Identity.ToString()}},@{n='status';e={$_.Status.ToString()}},@{n='percent';e={$_.PercentageComplete}},@{n='synced';e={$_.SyncedItemCount}},@{n='skipped';e={$_.SkippedItemCount}},@{n='error';e={if($_.Error){$_.Error.ToString()}else{''}}} |
   ConvertTo-Json -Depth 3 -Compress`;
   const out = await runPowerShell(script, { onData });
@@ -61,8 +68,10 @@ Get-MigrationUser -BatchId '${esc(batchName)}' -ErrorAction Stop | Get-Migration
 
 /** Verify the cross-tenant/remote endpoint is reachable for a test mailbox. */
 export async function testEndpoint(endpointName, testMailbox, onData) {
+  const ep = validate(endpointName, 'label', 'endpointName');
+  const mbx = optional(testMailbox, 'email', 'testMailbox');
   const script = `${connectBlock()}
-Test-MigrationServerAvailability -Endpoint '${esc(endpointName)}' ${testMailbox ? `-TestMailbox '${esc(testMailbox)}'` : ''} -ErrorAction Stop |
+Test-MigrationServerAvailability -Endpoint '${esc(ep)}' ${mbx ? `-TestMailbox '${esc(mbx)}'` : ''} -ErrorAction Stop |
   Select-Object Result,Message | ConvertTo-Json -Compress`;
   const out = await runPowerShell(script, { onData });
   return parseJsonOutput(out);
@@ -88,7 +97,8 @@ const escq = (s = '') => String(s).replace(/'/g, "''");
  * ExchangeGuid prerequisites. Streams human-readable PASS/FAIL lines.
  */
 export function buildCrossTenantCheckScript(p) {
-  const users = (p.users || []).map((u) => u.destination || u.source);
+  validate(p.endpointName, 'label', 'endpointName');
+  const users = (p.users || []).map((u) => validate(u.destination || u.source, 'email', 'user address'));
   const perUser = users.map((u) => `Try {
   $r = Get-Recipient -Identity '${escq(u)}' -ErrorAction Stop
   if ($r.RecipientTypeDetails -like '*MailUser*') {
