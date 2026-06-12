@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Genereert per bedrijf een professioneel M365 tenant-naar-tenant migratiewerkboek.
-Bron-tenant: het bedrijf zelf | Doel-tenant: Kelso
+Generates a professional M365 tenant-to-tenant migration workbook per company.
+Source tenant: the company itself | Target tenant: Kelso
 """
 import os
 from openpyxl import Workbook
@@ -15,13 +15,13 @@ COMPANIES = [
     "Icon", "Wallace", "Markade", "Fab-Logix", "Premier", "Strictly",
 ]
 TARGET = "Kelso"
-OUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Migratie-Excels")
+OUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Migration-Excels")
 
-# ---------- Stijl-definities ----------
-C_DARK = "1F3864"      # donkerblauw
-C_MED = "2F5597"       # middenblauw
-C_LIGHT = "D6E4F0"     # lichtblauw
-C_ACCENT = "ED7D31"    # oranje accent
+# ---------- Style definitions ----------
+C_DARK = "1F3864"      # dark blue
+C_MED = "2F5597"       # medium blue
+C_LIGHT = "D6E4F0"     # light blue
+C_ACCENT = "ED7D31"    # orange accent
 C_GREY = "F2F2F2"
 
 F_TITLE = Font(name="Calibri", size=20, bold=True, color="FFFFFF")
@@ -43,20 +43,20 @@ BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 WRAP = Alignment(wrap_text=True, vertical="top")
 CENTER = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
-STATUS_LIST = '"Niet gestart,Bezig,Voltooid,Geblokkeerd,N.v.t."'
-PRIO_LIST = '"Hoog,Middel,Laag"'
+STATUS_LIST = '"Not started,In progress,Completed,Blocked,N/A"'
+PRIO_LIST = '"High,Medium,Low"'
 
 STATUS_COLORS = {
-    "Voltooid": "C6EFCE",
-    "Bezig": "FFEB9C",
-    "Geblokkeerd": "FFC7CE",
+    "Completed": "C6EFCE",
+    "In progress": "FFEB9C",
+    "Blocked": "FFC7CE",
 }
 
 
 def status_validation(ws, col, first_row, last_row):
     dv = DataValidation(type="list", formula1=STATUS_LIST, allow_blank=True)
-    dv.error = "Kies een waarde uit de lijst"
-    dv.errorTitle = "Ongeldige status"
+    dv.error = "Choose a value from the list"
+    dv.errorTitle = "Invalid status"
     ws.add_data_validation(dv)
     dv.add(f"{col}{first_row}:{col}{last_row}")
     for value, color in STATUS_COLORS.items():
@@ -72,7 +72,7 @@ def prio_validation(ws, col, first_row, last_row):
     dv.add(f"{col}{first_row}:{col}{last_row}")
     ws.conditional_formatting.add(
         f"{col}{first_row}:{col}{last_row}",
-        CellIsRule(operator="equal", formula=['"Hoog"'],
+        CellIsRule(operator="equal", formula=['"High"'],
                    fill=PatternFill("solid", fgColor="FFC7CE")))
 
 
@@ -81,7 +81,7 @@ def banner(ws, company, subtitle, ncols):
     ws.merge_cells(f"A1:{last}1")
     ws.merge_cells(f"A2:{last}2")
     c = ws["A1"]
-    c.value = f"M365 Tenant-naar-Tenant Migratie  |  {company}  →  {TARGET}"
+    c.value = f"M365 Tenant-to-Tenant Migration  |  {company}  →  {TARGET}"
     c.font = F_TITLE
     c.fill = FILL_DARK
     c.alignment = Alignment(horizontal="left", vertical="center", indent=1)
@@ -109,11 +109,11 @@ def header_row(ws, row, headers, widths):
 
 
 def task_sheet(wb, company, title, tab_color, intro, phases):
-    """phases: list of (fase-naam, [(taak, beschrijving, verantwoordelijke-default), ...])"""
+    """phases: list of (phase name, [(task, description, default owner), ...])"""
     ws = wb.create_sheet(title)
     ws.sheet_properties.tabColor = tab_color
-    headers = ["Nr", "Taak", "Beschrijving / Instructie", "Verantwoordelijke",
-               "Prioriteit", "Status", "Deadline", "Afgerond op", "Notities"]
+    headers = ["No", "Task", "Description / Instructions", "Owner",
+               "Priority", "Status", "Due date", "Completed on", "Notes"]
     widths = [6, 38, 70, 20, 11, 13, 13, 13, 35]
     banner(ws, company, intro, len(headers))
     header_row(ws, 4, headers, widths)
@@ -131,7 +131,7 @@ def task_sheet(wb, company, title, tab_color, intro, phases):
         ws.row_dimensions[row].height = 20
         row += 1
         for task, desc, owner in tasks:
-            values = [nr, task, desc, owner, "", "Niet gestart", "", "", ""]
+            values = [nr, task, desc, owner, "", "Not started", "", "", ""]
             for col, v in enumerate(values, start=1):
                 cell = ws.cell(row=row, column=col, value=v)
                 cell.font = F_BODY
@@ -152,195 +152,195 @@ def task_sheet(wb, company, title, tab_color, intro, phases):
     return ws
 
 
-# ---------- Inhoud van de fases ----------
+# ---------- Phase content ----------
 
-def phases_voorbereiding(company):
+def phases_preparation(company):
     return [
-        ("FASE 1 — PROJECT & GOVERNANCE", [
-            ("Kick-off & scope vastleggen",
-             f"Projectscope bepalen: welke workloads van {company} migreren naar {TARGET} (Exchange, OneDrive, SharePoint, Teams, apps). Stakeholders en beslissers benoemen.",
-             "Projectleider"),
-            ("Migratieplanning & tijdlijn",
-             "Gedetailleerde planning opstellen met mijlpalen, migratiegolven (waves) en cutover-datum. Rekening houden met vakanties en bedrijfskritische periodes.",
-             "Projectleider"),
-            ("Communicatieplan opstellen",
-             "Eindgebruikers tijdig informeren: wat verandert er, wanneer, wat moeten ze zelf doen (nieuw wachtwoord, MFA opnieuw instellen, Outlook-profiel, Teams).",
-             "Projectleider"),
-            ("Rollback-/noodplan definiëren",
-             "Terugvalscenario beschrijven per workload als de migratie misloopt (MX terugzetten, forwarding, herstel vanaf back-up).",
+        ("PHASE 1 — PROJECT & GOVERNANCE", [
+            ("Kick-off & define scope",
+             f"Define project scope: which workloads of {company} migrate to {TARGET} (Exchange, OneDrive, SharePoint, Teams, apps). Identify stakeholders and decision makers.",
+             "Project lead"),
+            ("Migration planning & timeline",
+             "Create a detailed plan with milestones, migration waves and the cutover date. Take holidays and business-critical periods into account.",
+             "Project lead"),
+            ("Create communication plan",
+             "Inform end users in time: what changes, when, and what they need to do themselves (new password, re-register MFA, Outlook profile, Teams).",
+             "Project lead"),
+            ("Define rollback / contingency plan",
+             "Describe a fallback scenario per workload in case the migration fails (revert MX, forwarding, restore from backup).",
              "M365 Engineer"),
-            ("Migratietool kiezen & licenties",
-             "Tool selecteren en licenties aanschaffen (bv. BitTitan MigrationWiz, Quest On Demand, AvePoint Fly, ShareGate). Aantal mailboxen/users bepalen voor licentietelling.",
-             "M365 Engineer"),
-        ]),
-        ("FASE 2 — TOEGANG & ACCOUNTS", [
-            ("Global Admin toegang bron-tenant",
-             f"Globale beheerder-account in de {company}-tenant verkrijgen/aanmaken (incl. MFA). Break-glass account documenteren.",
-             "M365 Engineer"),
-            (f"Global Admin toegang doel-tenant ({TARGET})",
-             f"Globale beheerder-account in de {TARGET}-tenant. Controleren dat er voldoende rechten zijn voor user-creatie, Exchange, SharePoint en Teams admin.",
-             "M365 Engineer"),
-            ("Service-accounts voor migratietool",
-             "Dedicated migratie-admin accounts aanmaken in bron én doel (zonder MFA-blokkade voor de tool, of met app-registratie/modern auth). Na afloop verwijderen.",
-             "M365 Engineer"),
-            ("App-registraties & API-permissies",
-             "App-registratie in Entra ID voor de migratietool met de juiste Graph/EWS-permissies; admin consent geven in beide tenants.",
+            ("Select migration tool & licenses",
+             "Select a tool and purchase licenses (e.g. BitTitan MigrationWiz, Quest On Demand, AvePoint Fly, ShareGate). Determine number of mailboxes/users for license count.",
              "M365 Engineer"),
         ]),
-        ("FASE 3 — LICENTIES & CAPACITEIT DOEL-TENANT", [
-            (f"Licenties controleren in {TARGET}",
-             f"Voldoende M365-licenties (Business Premium/E3/E5 etc.) beschikbaar in {TARGET} voor alle te migreren gebruikers van {company}.",
-             "Projectleider"),
-            ("Opslagcapaciteit SharePoint controleren",
-             f"Controle of de SharePoint-opslagquota in {TARGET} de data van {company} aankunnen (inventory-cijfers gebruiken).",
+        ("PHASE 2 — ACCESS & ACCOUNTS", [
+            ("Global Admin access source tenant",
+             f"Obtain/create a Global Administrator account in the {company} tenant (incl. MFA). Document a break-glass account.",
              "M365 Engineer"),
-            ("Naamgevingsconventie bepalen",
-             f"UPN-/e-mailformaat in {TARGET} vastleggen (bv. voornaam.achternaam@kelso-domein) en conflicten met bestaande {TARGET}-gebruikers identificeren.",
+            (f"Global Admin access target tenant ({TARGET})",
+             f"Global Administrator account in the {TARGET} tenant. Verify sufficient rights for user creation, Exchange, SharePoint and Teams admin.",
              "M365 Engineer"),
-        ]),
-        ("FASE 4 — DOMEIN & DNS VOORBEREIDING", [
-            ("DNS-beheer toegang regelen",
-             f"Toegang tot de DNS-registrar/zone van het {company}-domein verifiëren. TTL van MX/Autodiscover records vóór cutover verlagen naar 300-3600 sec.",
+            ("Service accounts for migration tool",
+             "Create dedicated migration admin accounts in source and target (without MFA blocking the tool, or with app registration/modern auth). Remove afterwards.",
              "M365 Engineer"),
-            ("Domeinverhuizing voorbereiden",
-             f"Plan voor het verwijderen van het maildomein uit de {company}-tenant en toevoegen + verifiëren in {TARGET} (verificatie-TXT klaarzetten). Let op: domein kan pas verhuizen als alle objecten het niet meer gebruiken.",
-             "M365 Engineer"),
-            ("Externe afhankelijkheden DNS",
-             "SPF, DKIM, DMARC, MTA-STS en eventuele 3rd-party records (printers/scanners, applicaties die SMTP-relay gebruiken) inventariseren en herconfigureren.",
+            ("App registrations & API permissions",
+             "App registration in Entra ID for the migration tool with the correct Graph/EWS permissions; grant admin consent in both tenants.",
              "M365 Engineer"),
         ]),
-        ("FASE 5 — EINDGEBRUIKERS & WERKPLEK", [
-            ("Workstations inventariseren",
-             "Overzicht van alle pc's/laptops: Entra-joined of hybrid? Intune-managed? Plan voor het omhangen van devices naar de Kelso-tenant.",
-             "Werkplekbeheer"),
-            ("Outlook-/OneDrive-profielen plan",
-             "Procedure opstellen voor nieuw Outlook-profiel en OneDrive-herkoppeling op elke werkplek na cutover (handmatig of gescript).",
-             "Werkplekbeheer"),
-            ("Mobiele apparaten",
-             "Plan voor het opnieuw inschrijven van telefoons/tablets (Outlook mobile, Teams, Company Portal, MFA/Authenticator opnieuw registreren).",
-             "Werkplekbeheer"),
-            ("Wachtwoorden & MFA-instructies",
-             "Instructiedocument voor gebruikers: eerste aanmelding in Kelso-tenant, wachtwoord instellen, MFA registreren.",
-             "Servicedesk"),
+        ("PHASE 3 — LICENSES & TARGET TENANT CAPACITY", [
+            (f"Verify licenses in {TARGET}",
+             f"Sufficient M365 licenses (Business Premium/E3/E5 etc.) available in {TARGET} for all {company} users to be migrated.",
+             "Project lead"),
+            ("Check SharePoint storage capacity",
+             f"Verify that the SharePoint storage quota in {TARGET} can hold the {company} data (use the inventory figures).",
+             "M365 Engineer"),
+            ("Define naming convention",
+             f"Define the UPN/email format in {TARGET} (e.g. firstname.lastname@kelso-domain) and identify conflicts with existing {TARGET} users.",
+             "M365 Engineer"),
+        ]),
+        ("PHASE 4 — DOMAIN & DNS PREPARATION", [
+            ("Arrange DNS management access",
+             f"Verify access to the DNS registrar/zone of the {company} domain. Lower the TTL of MX/Autodiscover records to 300-3600 sec before cutover.",
+             "M365 Engineer"),
+            ("Prepare domain move",
+             f"Plan for removing the mail domain from the {company} tenant and adding + verifying it in {TARGET} (prepare the verification TXT record). Note: the domain can only move once no objects use it anymore.",
+             "M365 Engineer"),
+            ("External DNS dependencies",
+             "Inventory and reconfigure SPF, DKIM, DMARC, MTA-STS and any 3rd-party records (printers/scanners, applications using SMTP relay).",
+             "M365 Engineer"),
+        ]),
+        ("PHASE 5 — END USERS & WORKPLACE", [
+            ("Inventory workstations",
+             "Overview of all PCs/laptops: Entra-joined or hybrid? Intune-managed? Plan for moving devices to the Kelso tenant.",
+             "Workplace admin"),
+            ("Outlook/OneDrive profile plan",
+             "Create a procedure for a new Outlook profile and OneDrive re-link on every workstation after cutover (manual or scripted).",
+             "Workplace admin"),
+            ("Mobile devices",
+             "Plan for re-enrolling phones/tablets (Outlook mobile, Teams, Company Portal, re-register MFA/Authenticator).",
+             "Workplace admin"),
+            ("Password & MFA instructions",
+             "Instruction document for users: first sign-in to the Kelso tenant, set password, register MFA.",
+             "Service desk"),
         ]),
     ]
 
 
 def phases_inventory(company):
     return [
-        ("INVENTORY — IDENTITEIT", [
-            ("Gebruikersoverzicht exporteren",
-             f"Alle gebruikers uit {company} exporteren (Entra ID > Users of Graph/PowerShell: Get-MgUser). Vastleggen: UPN, displaynaam, licenties, laatste login, actief/inactief.",
+        ("INVENTORY — IDENTITY", [
+            ("Export user overview",
+             f"Export all users from {company} (Entra ID > Users or Graph/PowerShell: Get-MgUser). Record: UPN, display name, licenses, last sign-in, active/inactive.",
              "M365 Engineer"),
-            ("Gedeelde mailboxen & resources",
-             "Shared mailboxes, room/equipment mailboxes en hun delegaties (Full Access, Send As, Send on Behalf) exporteren (Get-Mailbox / Get-MailboxPermission).",
+            ("Shared mailboxes & resources",
+             "Export shared mailboxes, room/equipment mailboxes and their delegations (Full Access, Send As, Send on Behalf) (Get-Mailbox / Get-MailboxPermission).",
              "M365 Engineer"),
-            ("Distributielijsten & M365-groepen",
-             "Alle distributiegroepen, mail-enabled security groups en Microsoft 365-groepen incl. leden en eigenaren exporteren.",
+            ("Distribution lists & M365 groups",
+             "Export all distribution groups, mail-enabled security groups and Microsoft 365 groups incl. members and owners.",
              "M365 Engineer"),
-            ("Gast-accounts (B2B)",
-             "Externe gasten in de tenant inventariseren; bepalen welke opnieuw uitgenodigd moeten worden in Kelso.",
+            ("Guest accounts (B2B)",
+             "Inventory external guests in the tenant; decide which ones need to be re-invited in Kelso.",
              "M365 Engineer"),
-            ("Admin-rollen documenteren",
-             "Wie heeft welke beheerrol in de bron-tenant; bepalen welke rollen in Kelso nodig zijn.",
+            ("Document admin roles",
+             "Who holds which admin role in the source tenant; determine which roles are needed in Kelso.",
              "M365 Engineer"),
         ]),
         ("INVENTORY — EXCHANGE ONLINE", [
-            ("Mailboxgroottes & itemcounts",
-             "Per mailbox grootte en aantal items exporteren (Get-MailboxStatistics) — bepaalt migratieduur en eventuele pre-staging.",
+            ("Mailbox sizes & item counts",
+             "Export size and item count per mailbox (Get-MailboxStatistics) — determines migration duration and possible pre-staging.",
              "M365 Engineer"),
-            ("Archiefmailboxen",
-             "In-Place Archives identificeren (grootte, auto-expanding archives vergen extra aandacht/tooling).",
+            ("Archive mailboxes",
+             "Identify In-Place Archives (size; auto-expanding archives require extra attention/tooling).",
              "M365 Engineer"),
-            ("Mailflow-regels & connectors",
-             "Transport rules, connectors, anti-spam/anti-phish policies en e-maildisclaimers documenteren om na te bouwen in Kelso.",
+            ("Mail flow rules & connectors",
+             "Document transport rules, connectors, anti-spam/anti-phish policies and email disclaimers to rebuild in Kelso.",
              "M365 Engineer"),
             ("Forwarding & inbox rules",
-             "Mailbox-forwarding en kritische inbox rules inventariseren (gaan niet altijd automatisch mee).",
+             "Inventory mailbox forwarding and critical inbox rules (they do not always migrate automatically).",
              "M365 Engineer"),
-            ("Aliassen & proxy-adressen",
-             "Alle SMTP-aliassen per mailbox exporteren zodat ze in Kelso opnieuw aangemaakt kunnen worden.",
+            ("Aliases & proxy addresses",
+             "Export all SMTP aliases per mailbox so they can be recreated in Kelso.",
              "M365 Engineer"),
-            ("Litigation hold & retentie",
-             "Mailboxen met Litigation Hold/retention policies identificeren — data veiligstellen vóór migratie (hold-data migreert niet vanzelf).",
+            ("Litigation hold & retention",
+             "Identify mailboxes with Litigation Hold/retention policies — secure the data before migration (hold data does not migrate by itself).",
              "M365 Engineer"),
         ]),
         ("INVENTORY — ONEDRIVE & SHAREPOINT", [
-            ("OneDrive-overzicht",
-             "Per gebruiker OneDrive-URL, grootte en aantal bestanden exporteren (SharePoint admin center of PowerShell).",
+            ("OneDrive overview",
+             "Export OneDrive URL, size and file count per user (SharePoint admin center or PowerShell).",
              "M365 Engineer"),
-            ("SharePoint-sites inventariseren",
-             "Alle sites (team/communicatie), grootte, eigenaren, laatste activiteit. Verouderde sites markeren om NIET te migreren (opschonen = sneller migreren).",
+            ("Inventory SharePoint sites",
+             "All sites (team/communication), size, owners, last activity. Flag obsolete sites NOT to migrate (cleaning up = faster migration).",
              "M365 Engineer"),
-            ("Permissies & externe deellinks",
-             "Unieke permissies, externe sharing en anonieme links documenteren — externe links breken na migratie.",
+            ("Permissions & external sharing links",
+             "Document unique permissions, external sharing and anonymous links — external links break after migration.",
              "M365 Engineer"),
-            ("Verouderde data identificeren",
-             f"Met {company} afstemmen welke data gearchiveerd of weggegooid kan worden vóór de migratie.",
-             "Projectleider"),
+            ("Identify obsolete data",
+             f"Agree with {company} which data can be archived or deleted before the migration.",
+             "Project lead"),
         ]),
         ("INVENTORY — TEAMS", [
-            ("Teams & kanalen exporteren",
-             "Alle teams, kanalen (incl. private/shared channels!), leden en eigenaren exporteren. Private channels hebben eigen SharePoint-sites.",
+            ("Export teams & channels",
+             "Export all teams, channels (incl. private/shared channels!), members and owners. Private channels have their own SharePoint sites.",
              "M365 Engineer"),
-            ("Chat-historie beoordelen",
-             "Bepalen of 1:1/groepschats gemigreerd moeten worden (duur en beperkt mogelijk; vaak alleen teamkanaal-berichten migreren).",
-             "Projectleider"),
-            ("Apps, tabs & connectoren",
-             "Geïnstalleerde Teams-apps, tabs (Planner, OneNote, websites) en webhooks per team documenteren — moeten handmatig opnieuw.",
+            ("Assess chat history",
+             "Decide whether 1:1/group chats must be migrated (slow and only partially possible; often only team channel messages are migrated).",
+             "Project lead"),
+            ("Apps, tabs & connectors",
+             "Document installed Teams apps, tabs (Planner, OneNote, websites) and webhooks per team — these must be redone manually.",
              "M365 Engineer"),
-            ("Telefonie/voice (indien aanwezig)",
-             "Teams Phone-nummers, call queues en auto attendants inventariseren; nummerporting plannen.",
+            ("Telephony/voice (if present)",
+             "Inventory Teams Phone numbers, call queues and auto attendants; plan number porting.",
              "M365 Engineer"),
         ]),
-        ("INVENTORY — APPLICATIES & OVERIG", [
+        ("INVENTORY — APPLICATIONS & OTHER", [
             ("Enterprise apps & SSO",
-             "Applicaties die op de bron-tenant inloggen via Entra SSO (SaaS-apps, VPN, etc.) — moeten opnieuw gekoppeld worden aan Kelso.",
+             "Applications that sign in via Entra SSO on the source tenant (SaaS apps, VPN, etc.) — must be reconnected to Kelso.",
              "M365 Engineer"),
             ("Power Platform",
-             "Power Automate flows, Power Apps en Power BI-rapporten/werkruimtes inventariseren — migreren zelden automatisch mee.",
+             "Inventory Power Automate flows, Power Apps and Power BI reports/workspaces — these rarely migrate automatically.",
              "M365 Engineer"),
             ("Intune & compliance policies",
-             "Device-configuratie, compliance policies, conditional access en app protection policies documenteren ter herbouw in Kelso.",
+             "Document device configuration, compliance policies, conditional access and app protection policies to rebuild in Kelso.",
              "M365 Engineer"),
-            ("SMTP-relay & multifunctionals",
-             "Printers, scanners en applicaties die mailen via de bron-tenant — herconfigureren naar Kelso.",
-             "Werkplekbeheer"),
-            ("Risico-analyse afronden",
-             "Alle bevindingen samenvatten op het tabblad 'Risico's & Issues' en bespreken met de klant.",
-             "Projectleider"),
+            ("SMTP relay & multifunction devices",
+             "Printers, scanners and applications that send mail via the source tenant — reconfigure to Kelso.",
+             "Workplace admin"),
+            ("Complete risk analysis",
+             "Summarize all findings on the 'Risks & Issues' tab and discuss with the customer.",
+             "Project lead"),
         ]),
     ]
 
 
-def phases_identiteit(company):
+def phases_identity(company):
     return [
-        ("GEBRUIKERS AANMAKEN IN KELSO", [
-            ("User-mapping tabel opstellen",
-             f"Bron-UPN → doel-UPN mapping voor alle gebruikers (tabblad 'User Mapping'). Dit is de basis voor de migratietool.",
+        ("CREATE USERS IN KELSO", [
+            ("Create user mapping table",
+             "Source UPN → target UPN mapping for all users ('User Mapping' tab). This is the basis for the migration tool.",
              "M365 Engineer"),
-            ("Gebruikers provisionen in Kelso",
-             "Accounts aanmaken in de Kelso-tenant (CSV-import, Graph of scripted). Tijdelijk @kelso-onmicrosoft of doel-domein als UPN.",
+            ("Provision users in Kelso",
+             "Create accounts in the Kelso tenant (CSV import, Graph or scripted). Temporarily use @kelso-onmicrosoft or the target domain as UPN.",
              "M365 Engineer"),
-            ("Licenties toewijzen",
-             "Juiste licenties per gebruiker toewijzen zodat mailbox/OneDrive geprovisioned wordt (OneDrive pre-provisioning via PowerShell versnellen).",
+            ("Assign licenses",
+             "Assign the correct licenses per user so the mailbox/OneDrive gets provisioned (speed up OneDrive pre-provisioning via PowerShell).",
              "M365 Engineer"),
-            ("Groepen & DL's aanmaken",
-             "Distributielijsten, security groups en M365-groepen nabouwen in Kelso met juiste leden/eigenaren.",
+            ("Create groups & DLs",
+             "Rebuild distribution lists, security groups and M365 groups in Kelso with the correct members/owners.",
              "M365 Engineer"),
-            ("Shared & resource mailboxen aanmaken",
-             "Gedeelde mailboxen en room/equipment mailboxen aanmaken met dezelfde delegaties als in de bron.",
+            ("Create shared & resource mailboxes",
+             "Create shared mailboxes and room/equipment mailboxes with the same delegations as in the source.",
              "M365 Engineer"),
         ]),
-        ("BEVEILIGING & BELEID", [
-            ("MFA/Conditional Access voorbereiden",
-             "CA-policies in Kelso controleren; zorgen dat migratie-serviceaccounts uitgezonderd zijn tijdens de migratie.",
+        ("SECURITY & POLICY", [
+            ("Prepare MFA/Conditional Access",
+             "Review CA policies in Kelso; make sure migration service accounts are excluded during the migration.",
              "M365 Engineer"),
-            ("Wachtwoordbeleid & SSPR",
-             "Initiële wachtwoorden uitgeven via veilig kanaal; Self-Service Password Reset instellen.",
+            ("Password policy & SSPR",
+             "Distribute initial passwords via a secure channel; configure Self-Service Password Reset.",
              "M365 Engineer"),
-            ("Admin-rollen toekennen",
-             "Benodigde beheerrollen in Kelso toewijzen volgens least-privilege.",
+            ("Assign admin roles",
+             "Assign required admin roles in Kelso following least privilege.",
              "M365 Engineer"),
         ]),
     ]
@@ -348,50 +348,50 @@ def phases_identiteit(company):
 
 def phases_exchange(company):
     return [
-        ("PRE-STAGE (VÓÓR CUTOVER)", [
-            ("Migratietool configureren",
-             f"Bron ({company}) en doel ({TARGET}) endpoints koppelen in de migratietool; mapping-tabel importeren; testbatch met 2-3 mailboxen draaien.",
+        ("PRE-STAGE (BEFORE CUTOVER)", [
+            ("Configure migration tool",
+             f"Connect source ({company}) and target ({TARGET}) endpoints in the migration tool; import the mapping table; run a test batch with 2-3 mailboxes.",
              "M365 Engineer"),
-            ("Pre-stage sync mailboxen",
-             "Eerste volledige sync van alle mailboxdata (mail, agenda, contacten, taken) terwijl gebruikers nog op de bron werken. Grote mailboxen eerst starten.",
+            ("Pre-stage sync mailboxes",
+             "First full sync of all mailbox data (mail, calendar, contacts, tasks) while users still work on the source. Start the largest mailboxes first.",
              "M365 Engineer"),
-            ("Archieven migreren",
-             "In-Place Archives apart migreren naar archieven in Kelso (controleer tool-ondersteuning).",
+            ("Migrate archives",
+             "Migrate In-Place Archives separately to archives in Kelso (check tool support).",
              "M365 Engineer"),
-            ("Delta-syncs draaien",
-             "Dagelijkse delta-syncs tot aan cutover zodat de delta op cutover-dag minimaal is.",
+            ("Run delta syncs",
+             "Daily delta syncs until cutover so the delta on cutover day is minimal.",
              "M365 Engineer"),
-            ("Foutrapportage controleren",
-             "Per batch errors/skipped items beoordelen en oplossen (corrupte items, te grote items >150MB, throttling).",
-             "M365 Engineer"),
-        ]),
-        ("CUTOVER-DAG", [
-            ("Mailflow bevriezen / final delta",
-             "Laatste delta-sync draaien. Optioneel: bron-mailboxen op verzenden blokkeren tijdens het cutover-venster.",
-             "M365 Engineer"),
-            ("MX-records omzetten",
-             f"MX, Autodiscover, SPF, DKIM en DMARC omzetten naar de {TARGET}-tenant. DKIM in Kelso vooraf klaarzetten en activeren.",
-             "M365 Engineer"),
-            ("Domein verhuizen (indien van toepassing)",
-             f"Maildomein losmaken uit {company}-tenant (alle aliassen/UPN's eerst omzetten naar onmicrosoft) en toevoegen + verifiëren in {TARGET}; daarna UPN's en primaire SMTP omzetten.",
-             "M365 Engineer"),
-            ("Mailflow testen",
-             "Inbound/outbound mail testen (intern, extern, naar shared mailboxen, distributielijsten). Mail-tips en handtekeningen controleren.",
-             "M365 Engineer"),
-            ("Forwarding bron → doel (vangnet)",
-             "Tijdelijke forwarding instellen op bron-mailboxen voor mail die nog via oude route binnenkomt.",
+            ("Review error reports",
+             "Review errors/skipped items per batch and resolve them (corrupt items, items >150MB, throttling).",
              "M365 Engineer"),
         ]),
-        ("NA CUTOVER", [
+        ("CUTOVER DAY", [
+            ("Freeze mail flow / final delta",
+             "Run the final delta sync. Optional: block sending on source mailboxes during the cutover window.",
+             "M365 Engineer"),
+            ("Switch MX records",
+             f"Switch MX, Autodiscover, SPF, DKIM and DMARC to the {TARGET} tenant. Prepare and enable DKIM in Kelso beforehand.",
+             "M365 Engineer"),
+            ("Move domain (if applicable)",
+             f"Detach the mail domain from the {company} tenant (first switch all aliases/UPNs to onmicrosoft) and add + verify it in {TARGET}; then switch UPNs and primary SMTP.",
+             "M365 Engineer"),
+            ("Test mail flow",
+             "Test inbound/outbound mail (internal, external, to shared mailboxes, distribution lists). Check mail tips and signatures.",
+             "M365 Engineer"),
+            ("Forwarding source → target (safety net)",
+             "Set up temporary forwarding on source mailboxes for mail that still arrives via the old route.",
+             "M365 Engineer"),
+        ]),
+        ("AFTER CUTOVER", [
             ("Post-cutover delta",
-             "Laatste delta draaien om mail te vangen die tijdens cutover nog in de bron is bezorgd.",
+             "Run a final delta to catch mail delivered to the source during cutover.",
              "M365 Engineer"),
-            ("Outlook-profielen vernieuwen",
-             "Nieuwe Outlook-profielen op alle werkplekken; cache opnieuw opbouwen; handtekeningen terugzetten.",
-             "Servicedesk"),
-            ("Mobiele mail herconfigureren",
-             "Outlook mobile opnieuw koppelen aan het Kelso-account.",
-             "Servicedesk"),
+            ("Renew Outlook profiles",
+             "New Outlook profiles on all workstations; rebuild cache; restore signatures.",
+             "Service desk"),
+            ("Reconfigure mobile mail",
+             "Reconnect Outlook mobile to the Kelso account.",
+             "Service desk"),
         ]),
     ]
 
@@ -400,36 +400,36 @@ def phases_files(company):
     return [
         ("ONEDRIVE", [
             ("OneDrive pre-provisioning",
-             "OneDrives in Kelso vooraf aanmaken (Request-SPOPersonalSite) zodat de migratietool direct kan schrijven.",
+             "Pre-create OneDrives in Kelso (Request-SPOPersonalSite) so the migration tool can write immediately.",
              "M365 Engineer"),
             ("OneDrive pre-stage sync",
-             "Volledige eerste sync van alle OneDrive-data; daarna delta-syncs tot cutover.",
+             "Full first sync of all OneDrive data; then delta syncs until cutover.",
              "M365 Engineer"),
-            ("Versiegeschiedenis & metadata",
-             "Tool-instellingen controleren: versies, auteurs en timestamps meenemen waar mogelijk.",
+            ("Version history & metadata",
+             "Check tool settings: include versions, authors and timestamps where possible.",
              "M365 Engineer"),
-            ("Gedeelde links communiceren",
-             "Gebruikers informeren dat bestaande deellinks breken en opnieuw gedeeld moet worden.",
-             "Servicedesk"),
-            ("OneDrive-client herkoppelen",
-             "Na cutover op elke werkplek OneDrive ontkoppelen van bron en koppelen aan Kelso-account (sync-conflicten vermijden: oude map hernoemen).",
-             "Werkplekbeheer"),
+            ("Communicate shared links",
+             "Inform users that existing sharing links will break and items must be re-shared.",
+             "Service desk"),
+            ("Re-link OneDrive client",
+             "After cutover, unlink OneDrive from the source and link it to the Kelso account on every workstation (avoid sync conflicts: rename the old folder).",
+             "Workplace admin"),
         ]),
         ("SHAREPOINT", [
-            ("Site-structuur aanmaken in Kelso",
-             "Doelsites aanmaken (of door tool laten aanmaken) volgens afgestemde structuur; site-eigenaren instellen.",
+            ("Create site structure in Kelso",
+             "Create target sites (or let the tool create them) following the agreed structure; set site owners.",
              "M365 Engineer"),
             ("SharePoint pre-stage sync",
-             "Volledige sync van alle te migreren sites incl. documentbibliotheken, lijsten en permissies; delta's tot cutover.",
+             "Full sync of all sites to migrate incl. document libraries, lists and permissions; deltas until cutover.",
              "M365 Engineer"),
-            ("Permissies valideren",
-             "Steekproef per site: kloppen de rechten (eigenaren/leden/bezoekers, unieke permissies)?",
+            ("Validate permissions",
+             "Spot check per site: are the permissions correct (owners/members/visitors, unique permissions)?",
              "M365 Engineer"),
-            ("Snelkoppelingen & gesyncte bibliotheken",
-             "Gebruikers met gesyncte SharePoint-bibliotheken: oude sync verwijderen, nieuwe sync naar Kelso-sites instellen.",
-             "Werkplekbeheer"),
-            ("Final delta & verificatie",
-             "Laatste delta op cutover; itemcounts bron vs. doel vergelijken; afwijkingen rapporteren.",
+            ("Shortcuts & synced libraries",
+             "Users with synced SharePoint libraries: remove the old sync, set up a new sync to the Kelso sites.",
+             "Workplace admin"),
+            ("Final delta & verification",
+             "Final delta at cutover; compare item counts source vs. target; report discrepancies.",
              "M365 Engineer"),
         ]),
     ]
@@ -437,32 +437,32 @@ def phases_files(company):
 
 def phases_teams(company):
     return [
-        ("TEAMS — STRUCTUUR & DATA", [
-            ("Teams aanmaken in Kelso",
-             "Teams + kanalen (incl. private/shared channels) nabouwen of door de migratietool laten aanmaken; eigenaren en leden koppelen via de mapping-tabel.",
+        ("TEAMS — STRUCTURE & DATA", [
+            ("Create teams in Kelso",
+             "Rebuild teams + channels (incl. private/shared channels) or let the migration tool create them; link owners and members via the mapping table.",
              "M365 Engineer"),
-            ("Kanaalbestanden migreren",
-             "Bestanden van elk kanaal (SharePoint achter het team) migreren; private channel-sites niet vergeten.",
+            ("Migrate channel files",
+             "Migrate the files of every channel (SharePoint behind the team); don't forget private channel sites.",
              "M365 Engineer"),
-            ("Kanaalberichten migreren",
-             "Kanaalconversaties migreren indien gewenst (vaak als HTML-archief of via tool met beperkingen). Verwachtingen bij gebruikers managen.",
+            ("Migrate channel messages",
+             "Migrate channel conversations if desired (often as an HTML archive or via a tool with limitations). Manage user expectations.",
              "M365 Engineer"),
-            ("Chats (1:1/groep)",
-             "Indien in scope: chat-migratie draaien (beperkt; alternatief = leesbaar archief). Beslissing documenteren.",
-             "Projectleider"),
-            ("Tabs, apps & koppelingen herstellen",
-             "Planner, OneNote, websites-tabs en app-koppelingen per team handmatig terugzetten aan de hand van de inventory.",
+            ("Chats (1:1/group)",
+             "If in scope: run chat migration (limited; alternative = readable archive). Document the decision.",
+             "Project lead"),
+            ("Restore tabs, apps & connections",
+             "Manually restore Planner, OneNote, website tabs and app connections per team using the inventory.",
              "M365 Engineer"),
         ]),
-        ("TEAMS — NAZORG", [
-            ("Teams-client resetten",
-             "Gebruikers uitloggen/cache wissen en aanmelden met Kelso-account; vergaderingen in agenda's opnieuw aanmaken indien Teams-links naar bron-tenant wijzen.",
-             "Servicedesk"),
-            ("Terugkerende vergaderingen",
-             "Terugkerende Teams-meetings bevatten links naar de oude tenant — organisatoren laten her-aanmaken na cutover.",
-             "Servicedesk"),
-            ("Telefonie omzetten (indien aanwezig)",
-             "Nummers porteren/verhuizen, call queues en auto attendants nabouwen in Kelso.",
+        ("TEAMS — AFTERCARE", [
+            ("Reset Teams client",
+             "Sign users out/clear cache and sign in with the Kelso account; recreate calendar meetings if Teams links point to the source tenant.",
+             "Service desk"),
+            ("Recurring meetings",
+             "Recurring Teams meetings contain links to the old tenant — have organizers recreate them after cutover.",
+             "Service desk"),
+            ("Move telephony (if present)",
+             "Port/move numbers, rebuild call queues and auto attendants in Kelso.",
              "M365 Engineer"),
         ]),
     ]
@@ -470,79 +470,79 @@ def phases_teams(company):
 
 def phases_cutover(company):
     return [
-        ("CUTOVER-CHECKLIST (GO/NO-GO)", [
-            ("Go/No-Go beslissing",
-             "Checklist doorlopen met projectteam: pre-stage syncs ≥95% compleet, geen blokkerende fouten, communicatie verstuurd, support klaar.",
-             "Projectleider"),
-            ("Eindgebruikerscommunicatie versturen",
-             "Laatste instructiemail: tijdstip, wat te doen maandagochtend, waar hulp te krijgen.",
-             "Projectleider"),
-            ("Final delta alle workloads",
-             "Laatste delta-sync mail, OneDrive, SharePoint en Teams.",
+        ("CUTOVER CHECKLIST (GO/NO-GO)", [
+            ("Go/No-Go decision",
+             "Walk through the checklist with the project team: pre-stage syncs ≥95% complete, no blocking errors, communication sent, support ready.",
+             "Project lead"),
+            ("Send end-user communication",
+             "Final instruction email: timing, what to do Monday morning, where to get help.",
+             "Project lead"),
+            ("Final delta all workloads",
+             "Final delta sync for mail, OneDrive, SharePoint and Teams.",
              "M365 Engineer"),
-            ("DNS-cutover uitvoeren",
-             "MX/Autodiscover/SPF/DKIM/DMARC omzetten (zie Exchange-tabblad).",
+            ("Execute DNS cutover",
+             "Switch MX/Autodiscover/SPF/DKIM/DMARC (see Exchange tab).",
              "M365 Engineer"),
-            ("UPN & primaire SMTP omzetten",
-             "Gebruikers in Kelso omzetten naar het productiedomein als primair adres.",
+            ("Switch UPN & primary SMTP",
+             "Switch users in Kelso to the production domain as primary address.",
              "M365 Engineer"),
-            ("Bron-tenant beperken",
-             "Sign-in blokkeren op bron-accounts (na validatie) om verwarring en dubbel gebruik te voorkomen.",
+            ("Restrict source tenant",
+             "Block sign-in on source accounts (after validation) to prevent confusion and double usage.",
              "M365 Engineer"),
         ]),
-        ("VALIDATIE NA CUTOVER", [
-            ("Mailflow-validatie",
-             "Test intern/extern/inbound/outbound, shared mailboxen, DL's, handtekeningen, agenda-delegaties.",
+        ("VALIDATION AFTER CUTOVER", [
+            ("Mail flow validation",
+             "Test internal/external/inbound/outbound, shared mailboxes, DLs, signatures, calendar delegations.",
              "M365 Engineer"),
-            ("Data-steekproeven",
-             "Per gebruikersgroep steekproef op mail, OneDrive, SharePoint en Teams-bestanden (counts en recente items).",
+            ("Data spot checks",
+             "Spot check per user group on mail, OneDrive, SharePoint and Teams files (counts and recent items).",
              "M365 Engineer"),
-            ("Werkplekken omgezet",
-             "Alle pc's: nieuw profiel, OneDrive gekoppeld, Teams aangemeld, printers/scan-to-mail werkt.",
-             "Werkplekbeheer"),
-            ("Hypercare-periode starten",
-             "1-2 weken verhoogde support; issues loggen op het tabblad 'Risico's & Issues'.",
-             "Servicedesk"),
+            ("Workstations switched",
+             "All PCs: new profile, OneDrive linked, Teams signed in, printers/scan-to-mail working.",
+             "Workplace admin"),
+            ("Start hypercare period",
+             "1-2 weeks of elevated support; log issues on the 'Risks & Issues' tab.",
+             "Service desk"),
         ]),
-        ("AFRONDING & DECOMMISSIE", [
-            ("Migratierapport opleveren",
-             f"Eindrapport: gemigreerde aantallen, openstaande punten, afwijkingen, lessons learned voor {company}.",
-             "Projectleider"),
-            ("Forwarding & service-accounts opruimen",
-             "Tijdelijke forwarding, migratie-accounts en app-registraties verwijderen in beide tenants.",
+        ("CLOSURE & DECOMMISSION", [
+            ("Deliver migration report",
+             f"Final report: migrated counts, open items, deviations, lessons learned for {company}.",
+             "Project lead"),
+            ("Clean up forwarding & service accounts",
+             "Remove temporary forwarding, migration accounts and app registrations in both tenants.",
              "M365 Engineer"),
-            ("Bron-tenant afbouwen",
-             "Na afgesproken bewaarperiode: licenties opzeggen, data-export/back-up veiligstellen, tenant opheffen of slapend maken.",
+            ("Decommission source tenant",
+             "After the agreed retention period: cancel licenses, secure a data export/backup, retire or park the tenant.",
              "M365 Engineer"),
-            ("Documentatie & overdracht",
-             "Beheerdocumentatie Kelso-omgeving bijwerken en overdragen aan beheer.",
-             "Projectleider"),
+            ("Documentation & handover",
+             "Update the Kelso environment's admin documentation and hand it over to operations.",
+             "Project lead"),
         ]),
     ]
 
 
-# ---------- Speciale tabbladen ----------
+# ---------- Special tabs ----------
 
 def overview_sheet(wb, company):
-    ws = wb.create_sheet("Overzicht", 0)
+    ws = wb.create_sheet("Overview", 0)
     ws.sheet_properties.tabColor = C_DARK
-    banner(ws, company, "Projectoverzicht & voortgang per fase", 6)
+    banner(ws, company, "Project overview & progress per phase", 6)
 
     info = [
-        ("Bron-tenant", company),
-        ("Doel-tenant", TARGET),
-        ("Projectleider", ""),
+        ("Source tenant", company),
+        ("Target tenant", TARGET),
+        ("Project lead", ""),
         ("M365 Engineer", ""),
-        ("Migratietool", ""),
-        ("Geplande cutover-datum", ""),
-        ("Aantal gebruikers", ""),
-        ("Aantal mailboxen (incl. shared)", ""),
-        ("Totale datagrootte (GB)", ""),
-        ("Status project", "Niet gestart"),
+        ("Migration tool", ""),
+        ("Planned cutover date", ""),
+        ("Number of users", ""),
+        ("Number of mailboxes (incl. shared)", ""),
+        ("Total data size (GB)", ""),
+        ("Project status", "Not started"),
     ]
     row = 4
     ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=6)
-    c = ws.cell(row=row, column=1, value="PROJECTGEGEVENS")
+    c = ws.cell(row=row, column=1, value="PROJECT DETAILS")
     c.font = F_PHASE; c.fill = FILL_ACCENT
     c.alignment = Alignment(horizontal="left", vertical="center", indent=1)
     for col in range(1, 7):
@@ -559,31 +559,31 @@ def overview_sheet(wb, company):
 
     row += 1
     ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=6)
-    c = ws.cell(row=row, column=1, value="VOORTGANG PER FASE")
+    c = ws.cell(row=row, column=1, value="PROGRESS PER PHASE")
     c.font = F_PHASE; c.fill = FILL_ACCENT
     c.alignment = Alignment(horizontal="left", vertical="center", indent=1)
     for col in range(1, 7):
         ws.cell(row=row, column=col).fill = FILL_ACCENT
     row += 1
-    hdrs = ["Fase", "Tabblad", "Status", "Startdatum", "Einddatum", "Opmerkingen"]
+    hdrs = ["Phase", "Tab", "Status", "Start date", "End date", "Remarks"]
     for i, h in enumerate(hdrs, 1):
         c = ws.cell(row=row, column=i, value=h)
         c.font = F_HDR; c.fill = FILL_MED; c.alignment = CENTER; c.border = BORDER
     row += 1
     first_status = row
-    fases = [
-        ("1. Voorbereiding", "1. Voorbereiding"),
-        ("2. Analyse & Inventory", "2. Analyse & Inventory"),
-        ("3. Identiteit & Gebruikers", "3. Identiteit"),
+    phases = [
+        ("1. Preparation", "1. Preparation"),
+        ("2. Analysis & Inventory", "2. Analysis & Inventory"),
+        ("3. Identity & Users", "3. Identity"),
         ("4. Exchange Online", "4. Exchange"),
         ("5. OneDrive & SharePoint", "5. OneDrive-SharePoint"),
         ("6. Teams", "6. Teams"),
-        ("7. Cutover & Nazorg", "7. Cutover & Nazorg"),
+        ("7. Cutover & Aftercare", "7. Cutover & Aftercare"),
     ]
-    for naam, tab in fases:
-        ws.cell(row=row, column=1, value=naam).font = F_BOLD
+    for name, tab in phases:
+        ws.cell(row=row, column=1, value=name).font = F_BOLD
         ws.cell(row=row, column=2, value=tab).font = F_BODY
-        ws.cell(row=row, column=3, value="Niet gestart").alignment = CENTER
+        ws.cell(row=row, column=3, value="Not started").alignment = CENTER
         for col in range(1, 7):
             ws.cell(row=row, column=col).border = BORDER
         row += 1
@@ -598,18 +598,18 @@ def overview_sheet(wb, company):
 def mapping_sheet(wb, company):
     ws = wb.create_sheet("User Mapping")
     ws.sheet_properties.tabColor = "7030A0"
-    headers = ["Nr", "Displaynaam", f"Bron UPN ({company})", f"Doel UPN ({TARGET})",
-               "Licentie doel", "Mailbox type", "Mailboxgrootte (GB)", "OneDrive (GB)",
-               "Gemigreerd?", "Notities"]
+    headers = ["No", "Display name", f"Source UPN ({company})", f"Target UPN ({TARGET})",
+               "Target license", "Mailbox type", "Mailbox size (GB)", "OneDrive (GB)",
+               "Migrated?", "Notes"]
     widths = [6, 26, 34, 34, 18, 16, 16, 14, 13, 30]
-    banner(ws, company, "Gebruikersmapping bron → doel (vul aan vanuit de inventory-export)", len(headers))
+    banner(ws, company, "User mapping source → target (fill in from the inventory export)", len(headers))
     header_row(ws, 4, headers, widths)
     for r in range(5, 55):
         ws.cell(row=r, column=1, value=r - 4).alignment = CENTER
         for col in range(1, len(headers) + 1):
             ws.cell(row=r, column=col).border = BORDER
             ws.cell(row=r, column=col).font = F_BODY
-    dv = DataValidation(type="list", formula1='"Ja,Nee,Bezig"', allow_blank=True)
+    dv = DataValidation(type="list", formula1='"Yes,No,In progress"', allow_blank=True)
     ws.add_data_validation(dv)
     dv.add("I5:I54")
     dv2 = DataValidation(type="list", formula1='"User,Shared,Room,Equipment"', allow_blank=True)
@@ -621,33 +621,33 @@ def mapping_sheet(wb, company):
 
 
 def risk_sheet(wb, company):
-    ws = wb.create_sheet("Risico's & Issues")
+    ws = wb.create_sheet("Risks & Issues")
     ws.sheet_properties.tabColor = "C00000"
-    headers = ["Nr", "Datum", "Type", "Omschrijving", "Impact", "Prioriteit",
-               "Eigenaar", "Status", "Oplossing / Mitigatie"]
+    headers = ["No", "Date", "Type", "Description", "Impact", "Priority",
+               "Owner", "Status", "Resolution / Mitigation"]
     widths = [6, 12, 12, 50, 30, 11, 18, 13, 45]
-    banner(ws, company, "Risico- en issue-log — houd hier alle bevindingen en incidenten bij", len(headers))
+    banner(ws, company, "Risk and issue log — track all findings and incidents here", len(headers))
     header_row(ws, 4, headers, widths)
     seed = [
-        ("Risico", "Externe deellinks (SharePoint/OneDrive) werken niet meer na migratie.",
-         "Gebruikers/externen verliezen toegang tot gedeelde bestanden.",
-         "Communiceren; belangrijkste shares na migratie opnieuw delen."),
-        ("Risico", "Terugkerende Teams-vergaderlinks verwijzen naar de oude tenant.",
-         "Vergaderingen niet toegankelijk na cutover.",
-         "Organisatoren laten her-aanmaken na cutover."),
-        ("Risico", "Throttling door Microsoft tijdens grote datamigraties.",
-         "Migratie duurt langer dan gepland.",
-         "Vroeg starten met pre-stage; migratiegolven spreiden."),
-        ("Risico", "Items >150 MB of corrupte items worden overgeslagen.",
-         "Ontbrekende bestanden/mail items.",
-         "Foutrapporten per batch controleren; handmatig nabehandelen."),
-        ("Risico", "Domein kan niet verhuizen door achtergebleven objecten.",
-         "Cutover-vertraging.",
-         "Vooraf alle aliassen/UPN's omzetten naar .onmicrosoft.com en valideren."),
+        ("Risk", "External sharing links (SharePoint/OneDrive) stop working after migration.",
+         "Users/external parties lose access to shared files.",
+         "Communicate; re-share the most important shares after migration."),
+        ("Risk", "Recurring Teams meeting links point to the old tenant.",
+         "Meetings not accessible after cutover.",
+         "Have organizers recreate them after cutover."),
+        ("Risk", "Microsoft throttling during large data migrations.",
+         "Migration takes longer than planned.",
+         "Start pre-staging early; spread migration waves."),
+        ("Risk", "Items >150 MB or corrupt items are skipped.",
+         "Missing files/mail items.",
+         "Review error reports per batch; handle manually afterwards."),
+        ("Risk", "Domain cannot move due to remaining objects.",
+         "Cutover delay.",
+         "Switch all aliases/UPNs to .onmicrosoft.com beforehand and validate."),
     ]
     row = 5
-    for i, (typ, oms, imp, mit) in enumerate(seed, 1):
-        vals = [i, "", typ, oms, imp, "Hoog", "", "Open", mit]
+    for i, (typ, desc, imp, mit) in enumerate(seed, 1):
+        vals = [i, "", typ, desc, imp, "High", "", "Open", mit]
         for col, v in enumerate(vals, 1):
             c = ws.cell(row=row, column=col, value=v)
             c.font = F_BODY; c.border = BORDER
@@ -657,15 +657,15 @@ def risk_sheet(wb, company):
         for col in range(1, len(headers) + 1):
             ws.cell(row=r, column=col).border = BORDER
     last = row + 19
-    dv = DataValidation(type="list", formula1='"Open,Bezig,Opgelost,Geaccepteerd"', allow_blank=True)
+    dv = DataValidation(type="list", formula1='"Open,In progress,Resolved,Accepted"', allow_blank=True)
     ws.add_data_validation(dv)
     dv.add(f"H5:H{last}")
-    dvt = DataValidation(type="list", formula1='"Risico,Issue,Beslissing,Actie"', allow_blank=True)
+    dvt = DataValidation(type="list", formula1='"Risk,Issue,Decision,Action"', allow_blank=True)
     ws.add_data_validation(dvt)
     dvt.add(f"C5:C{last}")
     prio_validation(ws, "F", 5, last)
     ws.conditional_formatting.add(
-        f"H5:H{last}", CellIsRule(operator="equal", formula=['"Opgelost"'],
+        f"H5:H{last}", CellIsRule(operator="equal", formula=['"Resolved"'],
                                   fill=PatternFill("solid", fgColor="C6EFCE")))
     ws.conditional_formatting.add(
         f"H5:H{last}", CellIsRule(operator="equal", formula=['"Open"'],
@@ -679,27 +679,27 @@ def build_workbook(company):
     wb = Workbook()
     wb.remove(wb.active)
     overview_sheet(wb, company)
-    task_sheet(wb, company, "1. Voorbereiding", "4472C4",
-               "Fase 1 — Voorbereiding: governance, toegang, licenties, DNS en werkplek",
-               phases_voorbereiding(company))
-    task_sheet(wb, company, "2. Analyse & Inventory", "70AD47",
-               "Fase 2 — Analyse & Inventory: breng de volledige bron-tenant in kaart",
+    task_sheet(wb, company, "1. Preparation", "4472C4",
+               "Phase 1 — Preparation: governance, access, licenses, DNS and workplace",
+               phases_preparation(company))
+    task_sheet(wb, company, "2. Analysis & Inventory", "70AD47",
+               "Phase 2 — Analysis & Inventory: map out the complete source tenant",
                phases_inventory(company))
     mapping_sheet(wb, company)
-    task_sheet(wb, company, "3. Identiteit", "FFC000",
-               "Fase 3 — Identiteit & gebruikers provisionen in de Kelso-tenant",
-               phases_identiteit(company))
+    task_sheet(wb, company, "3. Identity", "FFC000",
+               "Phase 3 — Provision identity & users in the Kelso tenant",
+               phases_identity(company))
     task_sheet(wb, company, "4. Exchange", "ED7D31",
-               "Fase 4 — Exchange Online migratie: pre-stage, cutover en nazorg",
+               "Phase 4 — Exchange Online migration: pre-stage, cutover and aftercare",
                phases_exchange(company))
     task_sheet(wb, company, "5. OneDrive-SharePoint", "5B9BD5",
-               "Fase 5 — OneDrive & SharePoint datamigratie",
+               "Phase 5 — OneDrive & SharePoint data migration",
                phases_files(company))
     task_sheet(wb, company, "6. Teams", "7030A0",
-               "Fase 6 — Microsoft Teams migratie",
+               "Phase 6 — Microsoft Teams migration",
                phases_teams(company))
-    task_sheet(wb, company, "7. Cutover & Nazorg", "C00000",
-               "Fase 7 — Cutover, validatie, hypercare en decommissie van de bron-tenant",
+    task_sheet(wb, company, "7. Cutover & Aftercare", "C00000",
+               "Phase 7 — Cutover, validation, hypercare and decommission of the source tenant",
                phases_cutover(company))
     risk_sheet(wb, company)
     return wb
@@ -715,7 +715,7 @@ if __name__ == "__main__":
     os.makedirs(OUT_DIR, exist_ok=True)
     for comp in COMPANIES:
         wb = build_workbook(comp)
-        path = os.path.join(OUT_DIR, f"M365_Migratie_{safe_name(comp)}_naar_{TARGET}.xlsx")
+        path = os.path.join(OUT_DIR, f"M365_Migration_{safe_name(comp)}_to_{TARGET}.xlsx")
         wb.save(path)
         print("OK", path)
-    print("Klaar:", len(COMPANIES), "werkboeken in", OUT_DIR)
+    print("Done:", len(COMPANIES), "workbooks in", OUT_DIR)
