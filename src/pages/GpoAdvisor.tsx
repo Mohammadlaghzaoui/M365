@@ -1,14 +1,18 @@
-import { useMemo, useState } from 'react';
-import { FileCode2, Upload, Download, Search, Sparkles, Loader2, Gauge, Plus, Trash2, BookOpen } from 'lucide-react';
-import { Badge, Button, Card, Field, PageHeader, ProgressBar, Section, Select, TextArea } from '../components/ui';
+import { useMemo, useRef, useState } from 'react';
+import { FileCode2, Upload, Download, Search, Sparkles, Loader2, Gauge, Plus, Trash2, BookOpen, Wand2, FlaskConical, Rocket, CheckCircle2, XCircle, Copy } from 'lucide-react';
+import { Badge, Button, Card, CodeBlock, CopyButton, Field, PageHeader, ProgressBar, Section, Select, TextArea } from '../components/ui';
 import { DonutChart, HBarChart } from '../components/charts';
 import { analyzeGpo, exportCsv, GpoAnalysis, getKnowledgeBase, MatchedSetting, parseGpoXml } from '../services/gpoParser';
 import { GpoMapping, gpoTargets, supportColor, seedGpoMappings } from '../data/gpoKnowledge';
+import { generateArtifacts, validateProfile, GeneratedArtifacts } from '../services/gpoGenerator';
+import { deployProfile } from '../services/gpoDeploy';
+import { currentAccount } from '../services/sso';
+import { getSSOSettings } from '../store/settings';
 import { useLocalStorage, uid } from '../store/useLocalStorage';
 import { chat } from '../services/ai';
 import { aiEnabled } from '../store/settings';
 
-type Tab = 'analyze' | 'explorer' | 'knowledge';
+type Tab = 'analyze' | 'explorer' | 'generator' | 'knowledge';
 
 export default function GpoAdvisor() {
   const [tab, setTab] = useState<Tab>('analyze');
@@ -107,7 +111,7 @@ export default function GpoAdvisor() {
       <PageHeader title="GPO → Intune Migration Advisor" subtitle="Upload Get-GPOReport XML exports. WorkPilot parses every policy, matches it to its Intune Settings Catalog / Endpoint Security / script / Win32 equivalent, scores migration readiness and exports the report." icon={<FileCode2 size={20} />} />
 
       <div className="mb-5 flex flex-wrap gap-2">
-        {([['analyze', 'Readiness & analysis'], ['explorer', 'Policy explorer'], ['knowledge', 'Knowledge engine']] as [Tab, string][]).map(([id, label]) => (
+        {([['analyze', 'Readiness & analysis'], ['explorer', 'Policy explorer'], ['generator', 'Generator & tester'], ['knowledge', 'Knowledge engine']] as [Tab, string][]).map(([id, label]) => (
           <button key={id} onClick={() => setTab(id)}
             className={`rounded-lg px-4 py-2 text-sm font-semibold ${tab === id ? 'bg-blue-600 text-white' : 'border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'}`}>
             {label}
@@ -223,8 +227,163 @@ export default function GpoAdvisor() {
         ) : <Card className="p-8 text-center text-sm text-slate-400">Upload a GPO export first.</Card>
       )}
 
+      {/* ===== GENERATOR & TESTER ===== */}
+      {tab === 'generator' && (analysis ? <GeneratorTab settings={analysis.settings} /> : <Card className="p-8 text-center text-sm text-slate-400">Upload a GPO export (or try the sample) first — the generator builds Intune artifacts from the analysis.</Card>)}
+
       {/* ===== KNOWLEDGE ENGINE ===== */}
       {tab === 'knowledge' && <KnowledgeEngine />}
+    </div>
+  );
+}
+
+function GeneratorTab({ settings }: { settings: MatchedSetting[] }) {
+  const [profileName, setProfileName] = useState('WorkPilot - Migrated GPO');
+  const [art, setArt] = useState<GeneratedArtifacts | null>(null);
+  const [validation, setValidation] = useState<ReturnType<typeof validateProfile> | null>(null);
+  const [log, setLog] = useState<{ text: string; level: string }[]>([]);
+  const [busy, setBusy] = useState<'test' | 'deploy' | null>(null);
+  const logRef = useRef<HTMLDivElement>(null);
+  const ssoReady = getSSOSettings().enabled && !!getSSOSettings().clientId;
+
+  const generate = () => {
+    const a = generateArtifacts(settings, profileName);
+    setArt(a);
+    setValidation(validateProfile(a.settingsCatalogJson));
+    setLog([]);
+  };
+
+  const addLog = (text: string, level = 'info') => {
+    setLog((prev) => [...prev, { text: `[${new Date().toLocaleTimeString('en-GB')}] ${text}`, level }]);
+    setTimeout(() => logRef.current?.scrollTo({ top: logRef.current.scrollHeight }), 30);
+  };
+
+  const download = (content: string, filename: string, type = 'text/plain') => {
+    const blob = new Blob([content], { type });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
+  const runDeploy = async (mode: 'test' | 'deploy') => {
+    if (!art) return;
+    setBusy(mode);
+    setLog([]);
+    try {
+      if (!(await currentAccount())) {
+        addLog('Not signed in with Microsoft. Sign in via Settings → Sign-in to test/deploy against your tenant.', 'err');
+        return;
+      }
+      const r = await deployProfile(art.settingsCatalogJson, mode,
+        (line, level) => addLog(line, level ?? 'info'));
+      addLog(mode === 'test'
+        ? `RESULT: profile is valid and deployable (${r.verifiedSettings} settings verified, test policy removed).`
+        : `RESULT: policy "${r.name}" created in Intune (id ${r.id}), unassigned.`, 'ok');
+    } catch (e) {
+      addLog(`FAILED: ${e instanceof Error ? e.message : e}`, 'err');
+      addLog('Tip: the SSO app needs DeviceManagementConfiguration.ReadWrite.All (admin consent).', 'warn');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+      <Card className="p-5">
+        <Section title="Generate Intune artifacts from the analysis">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="flex-1 min-w-64"><Field label="Profile name" value={profileName} onChange={setProfileName} /></div>
+            <Button onClick={generate}><Wand2 size={16} /> Generate</Button>
+          </div>
+          {art && (
+            <div className="mt-3 flex flex-wrap gap-2 text-xs">
+              <Badge color="green">{art.includedCount} settings → Settings Catalog</Badge>
+              <Badge color="orange">{art.scriptCount} → remediation scripts</Badge>
+              <Badge color="purple">{art.manualCount} → manual</Badge>
+            </div>
+          )}
+        </Section>
+      </Card>
+
+      {art && validation && (
+        <Card className={`p-5 ${validation.ok ? 'border-emerald-300 dark:border-emerald-700' : 'border-red-300 dark:border-red-700'}`}>
+          <Section title="Tester — profile validation">
+            <div className="space-y-1.5">
+              {validation.checks.map((c) => (
+                <div key={c.label} className="flex items-center gap-2 text-sm">
+                  {c.pass ? <CheckCircle2 size={15} className="text-emerald-500" /> : <XCircle size={15} className="text-red-500" />}
+                  <span className="text-slate-700 dark:text-slate-200">{c.label}</span>
+                  <span className="text-slate-400">— {c.detail}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <Button variant="ai" onClick={() => runDeploy('test')} disabled={!validation.ok || !!busy}>
+                {busy === 'test' ? <Loader2 size={15} className="animate-spin" /> : <FlaskConical size={15} />} Test in tenant (create + verify + delete)
+              </Button>
+              <Button onClick={() => runDeploy('deploy')} disabled={!validation.ok || !!busy}>
+                {busy === 'deploy' ? <Loader2 size={15} className="animate-spin" /> : <Rocket size={15} />} Deploy to Intune (unassigned)
+              </Button>
+              {!ssoReady && <span className="text-xs text-amber-600 dark:text-amber-400">Sign in with Microsoft (Settings → Sign-in) to test/deploy live.</span>}
+            </div>
+            <p className="mt-2 text-xs text-slate-400">Safe by design: the test creates the policy <strong>unassigned</strong> (no device receives it), verifies it imported, then deletes it. Requires the SSO app to have <code>DeviceManagementConfiguration.ReadWrite.All</code>.</p>
+            {log.length > 0 && (
+              <div className="mt-3 overflow-hidden rounded-xl border border-slate-700 bg-[#012456]">
+                <div className="flex items-center gap-2 border-b border-slate-700 bg-slate-900 px-3 py-2">
+                  <span className="h-3 w-3 rounded-full bg-red-500" /><span className="h-3 w-3 rounded-full bg-amber-400" /><span className="h-3 w-3 rounded-full bg-emerald-500" />
+                  <span className="ml-2 text-xs font-medium text-slate-300">Intune deployment — live (Microsoft Graph)</span>
+                </div>
+                <div ref={logRef} className="h-48 overflow-y-auto p-3 font-mono text-xs leading-relaxed">
+                  {log.map((l, i) => <div key={i} className={`whitespace-pre-wrap ${{ info: 'text-cyan-300', ok: 'text-emerald-400', err: 'text-red-400', warn: 'text-amber-300' }[l.level] ?? 'text-slate-300'}`}>{l.text}</div>)}
+                  {busy && <span className="inline-block h-3.5 w-2 animate-pulse bg-slate-200 align-middle" />}
+                </div>
+              </div>
+            )}
+          </Section>
+        </Card>
+      )}
+
+      {art && (
+        <>
+          <Card className="p-5">
+            <Section title="Settings Catalog profile (Graph JSON)" action={<div className="flex gap-2"><CopyButton text={art.settingsCatalogJson} /><Button variant="secondary" onClick={() => download(art.settingsCatalogJson, `${art.profileName.replace(/[^a-z0-9]+/gi, '-')}.json`, 'application/json')}><Download size={14} /> .json</Button></div>}>
+              <pre className="max-h-80 overflow-auto rounded-lg bg-slate-900 dark:bg-slate-950 border border-slate-700 p-3 text-xs leading-relaxed text-emerald-300 font-mono whitespace-pre-wrap">{art.settingsCatalogJson}</pre>
+            </Section>
+          </Card>
+          <Card className="p-5">
+            <Section title="PowerShell deployment script" action={<Button variant="secondary" onClick={() => download(art.deployScript, 'deploy-intune-profile.ps1')}><Download size={14} /> .ps1</Button>}>
+              <CodeBlock code={art.deployScript} />
+            </Section>
+          </Card>
+          {art.remediationScripts.length > 0 && (
+            <Card className="p-5">
+              <Section title={`Remediation script stubs (${art.remediationScripts.length})`}>
+                <div className="space-y-3">
+                  {art.remediationScripts.map((r) => (
+                    <div key={r.name}>
+                      <div className="mb-1 flex items-center justify-between">
+                        <span className="text-sm font-medium text-slate-600 dark:text-slate-300">{r.name}</span>
+                        <Button variant="secondary" onClick={() => download(r.script, r.name)}><Download size={13} /> .ps1</Button>
+                      </div>
+                      <CodeBlock code={r.script} />
+                    </div>
+                  ))}
+                </div>
+              </Section>
+            </Card>
+          )}
+          {art.manualSteps.length > 0 && (
+            <Card className="p-5">
+              <Section title={`Manual migration items (${art.manualSteps.length})`} action={<CopyButton text={art.manualSteps.join('\n')} />}>
+                <ul className="space-y-1.5">
+                  {art.manualSteps.map((m, i) => <li key={i} className="text-sm text-slate-600 dark:text-slate-300">• {m}</li>)}
+                </ul>
+              </Section>
+            </Card>
+          )}
+        </>
+      )}
     </div>
   );
 }
