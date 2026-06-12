@@ -9,7 +9,7 @@ import { load, save } from '../store/useLocalStorage';
 import { getBranding, getHiddenModules } from '../store/settings';
 import { Session, logout } from '../services/auth';
 import { getRole, roleLabel } from '../services/rbac';
-import { UserCircle2, LogOut, MonitorPlay, ChevronsLeft, ChevronsRight, Cpu, TriangleAlert } from 'lucide-react';
+import { UserCircle2, LogOut, MonitorPlay, ChevronsLeft, ChevronsRight, Cpu, TriangleAlert, Wrench } from "lucide-react";
 import { LogoFull, LogoMark } from './Logo';
 
 export const NAV = [
@@ -22,6 +22,7 @@ export const NAV = [
   { to: '/migration', label: 'Migration Projects', icon: FolderKanban, group: 'Migration' },
   { to: '/migration-console', label: 'Migration Console', icon: MonitorPlay, group: 'Migration' },
   { to: '/gpo-advisor', label: 'GPO → Intune Advisor', icon: FileText, group: 'Migration' },
+  { to: '/gpo-builder', label: 'GPO Builder', icon: Wrench, group: 'Migration' },
   { to: '/agent', label: 'Migration Agent', icon: Cpu, group: 'Migration' },
   { to: '/edge-cases', label: 'Migration Edge Cases', icon: TriangleAlert, group: 'Migration' },
   { to: '/cross-tenant', label: 'Cross-Tenant Migration', icon: ArrowLeftRight, group: 'Migration' },
