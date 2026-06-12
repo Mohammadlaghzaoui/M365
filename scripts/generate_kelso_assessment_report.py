@@ -1,19 +1,18 @@
 # -*- coding: utf-8 -*-
 """
 Builds the consolidated, enterprise-level Kelso Industries M365 Security &
-Tenant-to-Tenant Readiness Assessment Word report from the source assessments.
+Governance Assessment Word report (current state + recommended improvements).
 """
 import os
 from docx import Document
 from docx.shared import Pt, Cm, RGBColor
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT
-from docx.enum.section import WD_SECTION
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
 OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                   "Reports", "Kelso_M365_Security_Assessment_Enterprise_v1.0.docx")
+                   "Reports", "Kelso_M365_Security_Assessment_Enterprise_v1.1.docx")
 
 # Corporate palette
 NAVY = "1F3864"
@@ -22,7 +21,6 @@ LIGHT = "D6E4F0"
 GREY = "F2F2F2"
 RED = "C00000"
 AMBER = "ED7D31"
-GOLD = "FFC000"
 GREEN = "538135"
 
 RAG_FILL = {"Red": "F4CCCC", "Amber": "FCE5CD", "Green": "D9EAD3",
@@ -56,7 +54,14 @@ def cell_text(cell, text, bold=False, color=None, size=9.5, align=None):
     p.paragraph_format.space_after = Pt(2)
 
 
-def make_table(doc, rows, cols, widths=None, header_fill=BLUE):
+def no_split(table):
+    for row in table.rows:
+        trPr = row._tr.get_or_add_trPr()
+        cant = OxmlElement('w:cantSplit')
+        trPr.append(cant)
+
+
+def make_table(doc, rows, cols, widths=None):
     t = doc.add_table(rows=rows, cols=cols)
     t.style = "Table Grid"
     t.alignment = WD_TABLE_ALIGNMENT.CENTER
@@ -65,6 +70,7 @@ def make_table(doc, rows, cols, widths=None, header_fill=BLUE):
         for r in t.rows:
             for i, w in enumerate(widths):
                 r.cells[i].width = Cm(w)
+    no_split(t)
     return t
 
 
@@ -106,7 +112,7 @@ def add_page_number_footer(section):
     footer = section.footer
     p = footer.paragraphs[0]
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = p.add_run("Kelso Industries — Microsoft 365 Security & Tenant-to-Tenant Readiness Assessment  |  Confidential  |  Page ")
+    run = p.add_run("Kelso Industries — Microsoft 365 Security & Governance Assessment  |  Confidential  |  Page ")
     run.font.size = Pt(8); run.font.color.rgb = RGBColor.from_string("808080")
     run2 = p.add_run()
     fld1 = OxmlElement('w:fldChar'); fld1.set(qn('w:fldCharType'), 'begin')
@@ -129,10 +135,17 @@ def style_doc(doc):
         h.font.color.rgb = RGBColor.from_string(color)
         h.paragraph_format.space_before = Pt(before)
         h.paragraph_format.space_after = Pt(6)
+        h.paragraph_format.keep_with_next = True
         h.font.element.rPr.rFonts.set(qn('w:eastAsia'), 'Calibri')
     title = doc.styles["Title"]
     title.font.name = "Calibri"; title.font.size = Pt(28); title.font.bold = True
     title.font.color.rgb = RGBColor.from_string(NAVY)
+
+
+def chapter(doc, title):
+    """Every main chapter starts on a fresh page."""
+    doc.add_page_break()
+    return doc.add_heading(title, level=1)
 
 
 def bullets(doc, items):
@@ -169,13 +182,13 @@ for _ in range(4):
 para(doc, "MICROSOFT 365", bold=True, size=14, color=BLUE,
      align=WD_ALIGN_PARAGRAPH.CENTER)
 p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-r = p.add_run("Security & Tenant-to-Tenant\nReadiness Assessment")
+r = p.add_run("Security & Governance\nAssessment")
 r.bold = True; r.font.size = Pt(30); r.font.color.rgb = RGBColor.from_string(NAVY)
 para(doc, "Kelso Industries", bold=True, size=18, color=AMBER,
      align=WD_ALIGN_PARAGRAPH.CENTER)
 doc.add_paragraph()
-para(doc, "Consolidated Enterprise Report — Final Client Version", size=12,
-     color="595959", align=WD_ALIGN_PARAGRAPH.CENTER)
+para(doc, "Current-State Review & Recommended Improvements — Final Client Version",
+     size=12, color="595959", align=WD_ALIGN_PARAGRAPH.CENTER)
 for _ in range(6):
     doc.add_paragraph()
 
@@ -183,7 +196,7 @@ t = make_table(doc, 6, 2, widths=[5.5, 10.5])
 meta = [("Prepared for", "Kelso Industries"),
         ("Prepared by", "Mohamed Laghzaoui — Senior M365 Engineer"),
         ("Assessment date", "12 June 2026"),
-        ("Document version", "1.0 (Consolidated — supersedes all prior drafts)"),
+        ("Document version", "1.1 (Consolidated — supersedes all prior drafts)"),
         ("Classification", "Confidential — authorized Kelso Industries stakeholders only"),
         ("Evidence basis", "Microsoft 365 / Entra / Purview / Intune / Defender portal observations, consultant-reviewed and revalidated")]
 for i, (k, v) in enumerate(meta):
@@ -195,45 +208,43 @@ para(doc, "Confidentiality notice: this document contains administrative securit
           "about the Kelso Industries Microsoft 365 tenant and must be shared only with "
           "authorized stakeholders.", size=8.5, color="808080", italic=True,
      align=WD_ALIGN_PARAGRAPH.CENTER)
-doc.add_page_break()
 
-# ---------------- DOCUMENT CONTROL ----------------
-doc.add_heading("Document Control", level=1)
+# ---------------- DOCUMENT CONTROL + TOC ----------------
+chapter(doc, "Document Control")
 t = make_table(doc, 3, 4, widths=[2.2, 3.2, 5.6, 5.0])
 header_cells(t, ["Version", "Date", "Description", "Author"])
 fill_row(t, 1, ["0.x", "May–June 2026",
                 "Working drafts: portal assessment, reference-practice review, consultant review, live portal revalidation",
                 "Mohamed Laghzaoui"])
-fill_row(t, 2, ["1.0", "12 June 2026",
-                "Consolidated enterprise report — all findings merged, validated wording, client-ready",
+fill_row(t, 2, ["1.1", "12 June 2026",
+                "Consolidated enterprise report — current state, findings incl. tenant branding, validated wording, client-ready",
                 "Mohamed Laghzaoui"])
 doc.add_paragraph()
 doc.add_heading("Table of Contents", level=1)
 add_toc(doc)
-doc.add_page_break()
 
 # ---------------- 1. EXECUTIVE SUMMARY ----------------
-doc.add_heading("1. Executive Summary", level=1)
+chapter(doc, "1. Executive Summary")
 para(doc, "This assessment reviews the Microsoft 365 security and governance posture of Kelso "
-          "Industries from a senior M365 engineering perspective, and evaluates the tenant's "
-          "readiness to act as the target environment for upcoming tenant-to-tenant migrations. "
-          "The tenant shows meaningful adoption of Microsoft 365 services, including Exchange "
-          "Online, Microsoft Teams, SharePoint, OneDrive, Microsoft Entra, Intune, Purview and "
-          "Microsoft 365 Copilot.")
+          "Industries from a senior M365 engineering perspective. It documents what is present "
+          "in the tenant today, evaluates how mature each control area is, and recommends "
+          "concrete improvements. The tenant shows meaningful adoption of Microsoft 365 "
+          "services, including Exchange Online, Microsoft Teams, SharePoint, OneDrive, "
+          "Microsoft Entra, Intune, Purview and Microsoft 365 Copilot.")
 para(doc, "The most important conclusion is that the Microsoft 365 environment is not "
           "fundamentally weak; it is in a transitional maturity stage. Several controls exist or "
           "are partially available, but they need to be completed, governed, documented and "
           "measured. The key theme is not missing capability — it is that important controls are "
-          "not yet fully operationalized, validated or governed end-to-end.", bold=False)
+          "not yet fully operationalized, validated or governed end-to-end.")
 
 t = make_table(doc, 2, 3, widths=[4.0, 6.0, 6.0])
 header_cells(t, ["Current Risk Level", "Priority Findings", "Overall Direction"])
 fill_row(t, 1, ["Medium",
                 "Critical findings exist in privileged access and authentication method governance.",
-                "Improve control maturity without disrupting business adoption."], rag_cols=())
+                "Improve control maturity without disrupting business adoption."])
 shade(t.rows[1].cells[0], RAG_FILL["Medium"])
 
-doc.add_heading("1.1 Positive Observations", level=2)
+doc.add_heading("1.1 Positive Observations — What Is Already in Place", level=2)
 bullets(doc, [
     "Microsoft 365 is actively used across the organization: 742 active users in the admin dashboard and 459 active Microsoft 365 users across apps.",
     "Microsoft Entra ID P1 is present, providing a base for Conditional Access and identity governance improvements.",
@@ -246,7 +257,7 @@ bullets(doc, [
 ])
 
 doc.add_heading("1.2 Executive Domain Dashboard", level=2)
-t = make_table(doc, 7, 4, widths=[3.2, 1.8, 2.0, 9.0])
+t = make_table(doc, 8, 4, widths=[3.2, 1.8, 2.0, 9.0])
 header_cells(t, ["Domain", "Status", "Priority", "Consultant assessment"])
 rows = [
     ("Identity", "Red", "Critical", "Privileged identity governance and authentication method enforcement require immediate attention. PIM is not operationalized (Entra ID P1)."),
@@ -254,18 +265,19 @@ rows = [
     ("Endpoint", "Amber", "High", "Intune is in use for Windows devices; policy coverage and the 'Grant Local Admin' policy require detailed validation."),
     ("Data Protection", "Amber", "High", "Purview DLP is configured in test/simulation mode and not yet operating as an enforced control."),
     ("Governance", "Amber", "Medium", "Service governance requires improvement, including ownership of Message Center (744 unread), agents and enterprise applications."),
+    ("Tenant Experience", "Amber", "Low", "Kelso-branded sign-in and sign-out experience is not configured; users see a generic Microsoft login page."),
     ("Overall Maturity", "Amber", "Medium", "The platform foundation is present, but operating controls must be completed, validated and evidenced."),
 ]
 for i, r in enumerate(rows, 1):
     fill_row(t, i, list(r), rag_cols=(1, 2))
 
-doc.add_page_break()
+# ---------------- 2. CURRENT STATE ----------------
+chapter(doc, "2. Current Tenant State — What Is in the Tenant Today")
+para(doc, "This chapter documents the observed state of the Kelso Industries tenant at the time "
+          "of the assessment. It is the factual baseline on which the findings and "
+          "recommendations in chapter 4 are built.")
 
-# ---------------- 2. TENANT SNAPSHOT ----------------
-doc.add_heading("2. Tenant & Platform Snapshot", level=1)
-para(doc, "The tenant discovery indicates an established Microsoft 365 environment with broad "
-          "adoption and a meaningful population of users, groups, applications, devices and "
-          "collaboration workloads.")
+doc.add_heading("2.1 Tenant & Platform Snapshot", level=2)
 t = make_table(doc, 14, 2, widths=[7.0, 9.0])
 header_cells(t, ["Metric", "Observed value"])
 snap = [
@@ -281,19 +293,61 @@ snap = [
     ("Entra licensing", "Microsoft Entra ID P1 (PIM requires P2 / Entra ID Governance)"),
     ("Conditional Access policies", "4 Microsoft-managed + 4 user-created"),
     ("Intune devices", "279 Windows devices; no Apple/Android/Linux population visible"),
-    ("Enterprise applications", "152 observed (including MigrationWiz)"),
+    ("Enterprise applications", "152 observed"),
 ]
 for i, (k, v) in enumerate(snap, 1):
     fill_row(t, i, [k, v])
-para(doc, "Recommendations: maintain a formal tenant inventory covering identities, groups, "
-          "applications, devices, workloads and administrative roles; define service ownership "
-          "for Microsoft 365 workloads, enterprise applications, agents and operational health "
-          "reviews.", italic=True, size=10)
+
+doc.add_heading("2.2 Identity & Access — Observed State", level=2)
+t = make_table(doc, 9, 2, widths=[6.0, 10.0])
+header_cells(t, ["Area", "Observed state"])
+ident = [
+    ("Privileged Identity Management", "Not operationalized — the PIM portal indicates Entra ID P2 or Entra ID Governance is required; the tenant runs Entra ID P1."),
+    ("Privileged role assignments", "18 privileged role assignments observed; portal guidance recommends limiting privileged assignments."),
+    ("Break-glass accounts", "Not confirmed during this assessment."),
+    ("Authentication methods migration", "In progress."),
+    ("Microsoft Authenticator", "Adoption and enforcement require validation."),
+    ("Temporary Access Pass", "Enabled for all users; operational use and restrictions require review."),
+    ("Email OTP", "Enabled."),
+    ("Conditional Access", "4 Microsoft-managed + 4 user-created policies; exclusions, break-glass handling and legacy authentication coverage require validation."),
+]
+for i, kv in enumerate(ident, 1):
+    fill_row(t, i, list(kv))
+
+doc.add_heading("2.3 Workloads — Observed State", level=2)
+t = make_table(doc, 12, 2, widths=[6.0, 10.0])
+header_cells(t, ["Area", "Observed state"])
+wl = [
+    ("Exchange Online", "271 active users; 7 auto-forwarded messages and 1 new remote forwarding domain observed; transport rules and mailbox audit require validation."),
+    ("SPF / DKIM / DMARC", "Not fully validated — the Domains/DNS page could not be reliably reached during the review."),
+    ("Microsoft Teams", "213 active users; external access allows all external domains; guest access enabled; multiple third-party storage providers enabled."),
+    ("SharePoint & OneDrive", "116 / 112 active users; default sharing link is 'Anyone with the link' with Edit permission; anonymous link expiration not confirmed."),
+    ("Intune", "279 Windows devices; 2 compliance policies and 2 configuration policies, including Windows Security Baseline and a 'Grant Local Admin' policy."),
+    ("Microsoft Defender", "Portal access validated; it displayed a Defender for Business onboarding/setup experience — Secure Score and workload configuration require validation."),
+    ("Purview DLP", "One visible policy: the default Copilot DLP policy in test/simulation mode — 'Policy not enforced' displayed."),
+    ("Sensitivity labels", "Not confirmed as mature during this assessment."),
+    ("Audit", "Purview Audit search capability available."),
+    ("Message Center", "744 unread messages — no operational ownership visible."),
+    ("Tenant branding", "No Kelso-branded sign-in or sign-out experience visible; users see the generic Microsoft login page."),
+]
+for i, kv in enumerate(wl, 1):
+    fill_row(t, i, list(kv))
 
 # ---------------- 3. LICENSING ----------------
-doc.add_heading("3. Licensing Assessment", level=1)
+chapter(doc, "3. Licensing Assessment")
 para(doc, "Licensing is sufficient for several Microsoft 365 capabilities, but some security and "
           "governance controls require licensing validation before implementation decisions are made.")
+t = make_table(doc, 5, 2, widths=[6.0, 10.0])
+header_cells(t, ["Area", "Observed state"])
+lic = [
+    ("Microsoft 365 licenses", "696 of 706 licenses assigned."),
+    ("Microsoft 365 Copilot", "42 of 42 Copilot licenses assigned."),
+    ("Microsoft Entra", "Microsoft Entra ID P1 observed."),
+    ("PIM / Identity Governance", "Requires Microsoft Entra ID P2 or Microsoft Entra ID Governance — not currently licensed."),
+]
+for i, kv in enumerate(lic, 1):
+    fill_row(t, i, list(kv))
+para(doc, "Recommendations:", bold=True, size=10)
 bullets(doc, [
     "Conduct a cost-benefit assessment of Microsoft Entra ID P2 or Entra ID Governance for privileged identities — this is the strongest single investment case identified.",
     "Confirm whether Microsoft Defender and Purview licensing is sufficient for the desired security, compliance and reporting scope.",
@@ -301,8 +355,7 @@ bullets(doc, [
 ])
 
 # ---------------- 4. DETAILED FINDINGS ----------------
-doc.add_page_break()
-doc.add_heading("4. Detailed Findings & Recommended Improvements", level=1)
+chapter(doc, "4. Detailed Findings & Recommended Improvements")
 para(doc, "Each finding below lists severity, control owner, the evidence observed during the "
           "assessment, the business risk and the recommended remediation actions. Where portal "
           "state could not be fully confirmed, the finding is explicitly marked as requiring "
@@ -365,7 +418,7 @@ FINDINGS = [
       "Use labels to support DLP and Copilot governance."]),
     ("F7. Enterprise application and SSO governance require formal review", "High",
      "Identity / Application Owners", "High priority",
-     "The tenant contains 152 enterprise applications, including business-critical integrations and MigrationWiz.",
+     "The tenant contains 152 enterprise applications, including business-critical integrations.",
      "Large app estates can accumulate stale service principals, excessive permissions, ownerless applications, unmanaged consent and expired credentials — common identity and data-access risks. The number of applications is not itself a problem; the risk is the absence of an operating model.",
      ["Export all enterprise applications with owners, sign-in activity, permissions, credentials and certificate expiry.",
       "Remove stale or ownerless applications after validation.",
@@ -416,6 +469,14 @@ FINDINGS = [
       "Create an agent inventory with owner, purpose, data access scope and approval status.",
       "Align Copilot rollout with DLP, sensitivity labels and access reviews.",
       "Report Copilot readiness to IT leadership."]),
+    ("F13. Kelso sign-in and sign-out branding is not configured", "Low",
+     "IT / Security / Communications", "Quick win — operational excellence",
+     "The Kelso sign-in experience does not present a Kelso-branded background or branded login page; the sign-out page is equally generic. No evidence was captured that branding ownership or image standards exist.",
+     "This is not only cosmetic. A properly branded Entra sign-in page helps users recognize the legitimate corporate sign-in flow, increases phishing resilience, and strengthens the perceived maturity and professionalism of the tenant. A generic Microsoft experience is harder for users to distinguish from a fake login page.",
+     ["Configure Microsoft Entra company branding with approved Kelso background image, logo and colors for the sign-in experience.",
+      "Apply consistent branding to the sign-out page and add clear support/helpdesk text.",
+      "Assign branding ownership to IT/security/communications and define image and wording standards.",
+      "Review the branded experience after major Entra changes and at least annually."]),
 ]
 
 for title, sev, owner, prio, evidence, risk, actions in FINDINGS:
@@ -428,115 +489,8 @@ for title, sev, owner, prio, evidence, risk, actions in FINDINGS:
     para(doc, "Recommended actions:", bold=True, size=10)
     bullets(doc, actions)
 
-# ---------------- 5. WORKLOAD REVIEWS ----------------
-doc.add_page_break()
-doc.add_heading("5. Workload Assessments", level=1)
-
-WORKLOADS = [
-    ("5.1 Exchange Online", [
-        ("Exchange usage", "271 active Exchange users observed in workload reporting."),
-        ("Auto-forwarding", "7 auto-forwarded messages observed in reporting."),
-        ("Remote forwarding domains", "1 new remote domain receiving forwarded email observed."),
-        ("Transport rules / mailbox audit", "Requires validation."),
-    ], ["Review mailbox forwarding, inbox rules and transport rules.",
-        "Block automatic external forwarding unless explicitly approved and documented.",
-        "Create alerting for new forwarding rules and unusual mailbox access patterns."]),
-    ("5.2 Email Authentication (SPF / DKIM / DMARC)", [
-        ("SPF / DKIM / DMARC", "Not fully validated during this assessment — no conclusion should be made until DNS records and Exchange Online configuration are reviewed."),
-        ("Accepted domains", "Requires validation."),
-    ], ["Validate SPF includes only approved sending services.",
-        "Confirm DKIM is enabled for all production mail domains.",
-        "Review DMARC policy and reporting configuration.",
-        "Align third-party senders with approved DNS and mail authentication standards."]),
-    ("5.3 Microsoft Teams", [
-        ("Teams usage", "213 active Teams users observed."),
-        ("External access", "Configured to allow all external domains."),
-        ("Guest access", "Enabled; guest interaction and external collaboration features are broad."),
-        ("Third-party storage", "Multiple third-party storage providers enabled."),
-    ], ["Move external access toward a managed allow/block model where appropriate.",
-        "Validate guest access settings against business requirements.",
-        "Disable third-party storage services that are not approved.",
-        "Implement periodic review of external users and Teams with guests."]),
-    ("5.4 SharePoint & OneDrive", [
-        ("Usage", "116 active SharePoint users and 112 active OneDrive users observed."),
-        ("Default sharing link", "'Anyone with the link' with Edit permission observed."),
-        ("Anonymous link expiration", "Not confirmed during this assessment."),
-    ], ["Change default sharing links to 'Specific people' or 'People in your organization'.",
-        "Set default permission to View unless business need requires Edit.",
-        "Validate anonymous link expiration and site-level external sharing exceptions.",
-        "Review permissions before expanding Copilot usage — Copilot inherits existing Microsoft 365 permissions."]),
-    ("5.5 Intune & Endpoint", [
-        ("Windows devices", "279 observed; no Apple, macOS, Android or Linux population visible."),
-        ("Compliance / configuration policies", "2 compliance and 2 configuration policies, including Windows Security Baseline and 'Grant Local Admin'."),
-    ], ["Review compliance policies and assignments against Windows security baseline requirements.",
-        "Validate Defender, BitLocker, firewall, update, local administrator and compliance posture.",
-        "Review the Grant Local Admin policy, target groups and business justification.",
-        "Use device compliance state in Conditional Access where appropriate."]),
-    ("5.6 Microsoft Defender", [
-        ("Portal state", "Defender portal access was validated; it displayed a Defender for Business onboarding/setup experience rather than a completed Secure Score review."),
-        ("Defender for Office 365 / Endpoint / Cloud Apps", "Not confirmed during this assessment."),
-    ], ["Validate enabled Defender workloads and licensing.",
-        "Review anti-phishing, Safe Links, Safe Attachments and impersonation protection if Defender for Office 365 is licensed.",
-        "Validate endpoint onboarding and EDR health if Defender for Endpoint is licensed.",
-        "Use Microsoft Secure Score as an input, not as the only security maturity metric."]),
-    ("5.7 Purview, Compliance & Service Governance", [
-        ("DLP", "Default Copilot DLP policy observed in test/simulation mode; 'Policy not enforced' displayed."),
-        ("Sensitivity labels", "Not confirmed during this assessment."),
-        ("Audit", "Audit search capability observed."),
-        ("Message Center", "744 unread Message Center messages observed — service governance requires ownership."),
-    ], ["Define DLP policies for Exchange, SharePoint, OneDrive, Teams, endpoint and Copilot scenarios where required.",
-        "Move validated DLP scenarios from simulation to enforcement using a controlled change process.",
-        "Validate sensitivity labels, label publication policies and encryption requirements.",
-        "Assign ownership for Message Center, service health and roadmap impact reviews."]),
-]
-for title, state_rows, recs in WORKLOADS:
-    doc.add_heading(title, level=2)
-    t = make_table(doc, len(state_rows) + 1, 2, widths=[6.0, 10.0])
-    header_cells(t, ["Area", "Observed assessment"])
-    for i, kv in enumerate(state_rows, 1):
-        fill_row(t, i, list(kv))
-    para(doc, "Recommendations:", bold=True, size=10)
-    bullets(doc, recs)
-
-# ---------------- 6. T2T READINESS ----------------
-doc.add_page_break()
-doc.add_heading("6. Hybrid & Tenant-to-Tenant Migration Readiness", level=1)
-para(doc, "Kelso Industries is the target tenant for a multi-company tenant-to-tenant migration "
-          "program. The readiness items below must be validated and closed before migration "
-          "execution; they directly affect identity strategy, mail routing and cutover planning.")
-T2T = [
-    ("6.1 Hybrid Identity & Entra Connect",
-     "Hybrid identity, Entra Connect / Cloud Sync status and synchronization health were not confirmed during this assessment.",
-     ["Confirm whether Kelso uses cloud-only identity or hybrid identity.",
-      "Validate synchronization tool, health status and sync error backlog.",
-      "Confirm source anchor, UPN routing, proxyAddresses and mail attributes.",
-      "Resolve sync and attribute issues before migration execution."]),
-    ("6.2 Exchange Hybrid",
-     "Exchange hybrid configuration was not confirmed during the assessment.",
-     ["Validate whether Exchange hybrid is present and still required.",
-      "Review connectors, accepted domains, remote domains and mail routing.",
-      "Confirm coexistence requirements before any tenant-to-tenant migration."]),
-    ("6.3 MigrationWiz Readiness",
-     "MigrationWiz was observed as an enterprise application, but migration readiness was not fully validated.",
-     ["Validate MigrationWiz application permissions and consent model.",
-      "Confirm migration scope: workloads, identities, domains, mailboxes, OneDrive, SharePoint and Teams.",
-      "Document prerequisites, throttling approach, coexistence requirements and rollback plan."]),
-    ("6.4 Tenant-to-Tenant Readiness",
-     "Tenant-to-tenant readiness requires additional discovery before a migration plan can be finalized.",
-     ["Create a full migration inventory covering users, groups, mailboxes, aliases, domains, devices, OneDrive, SharePoint, Teams and enterprise apps for each source tenant.",
-      "Validate source and target identity strategy, UPN/domain plan and coexistence requirements.",
-      "Prepare a tenant-to-tenant cutover and rollback approach per migration wave.",
-      "Close the Critical identity findings (F1–F3) before onboarding migrated users, so new accounts land in a governed environment."]),
-]
-for title, state, recs in T2T:
-    doc.add_heading(title, level=2)
-    para(doc, state, size=10)
-    para(doc, "Recommendations:", bold=True, size=10)
-    bullets(doc, recs)
-
-# ---------------- 7. RISK REGISTER ----------------
-doc.add_page_break()
-doc.add_heading("7. Risk Register", level=1)
+# ---------------- 5. RISK REGISTER ----------------
+chapter(doc, "5. Risk Register")
 t = make_table(doc, 11, 5, widths=[1.2, 5.6, 1.6, 1.8, 5.8])
 header_cells(t, ["ID", "Risk", "Status", "Priority", "Recommended action"])
 RISKS = [
@@ -558,15 +512,15 @@ RISKS = [
      "Inventory app owners, permissions, consent and usage."),
     ("R9", "Service governance requires improvement.", "Amber", "Medium",
      "Assign owners for Message Center, service health and roadmap reviews."),
-    ("R10", "Tenant-to-tenant readiness requires further validation.", "Amber", "Medium",
-     "Complete migration discovery and dependency mapping."),
+    ("R10", "Kelso sign-in/sign-out branding is not configured.", "Amber", "Low",
+     "Configure Entra company branding with Kelso identity and assign ownership."),
 ]
 for i, r in enumerate(RISKS, 1):
     fill_row(t, i, list(r), rag_cols=(2, 3))
 
-# ---------------- 8. TARGET STATE ----------------
-doc.add_heading("8. Recommended Control Target State", level=1)
-t = make_table(doc, 13, 2, widths=[5.0, 11.0])
+# ---------------- 6. TARGET STATE ----------------
+chapter(doc, "6. Recommended Control Target State")
+t = make_table(doc, 14, 2, widths=[5.0, 11.0])
 header_cells(t, ["Control area", "Target state"])
 TARGETS = [
     ("Privileged access", "PIM enabled and used for just-in-time privileged role activation with approval, MFA and justification."),
@@ -581,13 +535,13 @@ TARGETS = [
     ("Exchange", "External forwarding blocked by default with approved, documented and monitored exceptions."),
     ("Endpoint", "Windows baseline enforced; local admin controlled; mobile/BYOD strategy defined with app protection."),
     ("AI / Copilot", "Copilot and agent estate inventoried, owned, permission-hygienic and aligned with DLP and labels."),
+    ("Tenant experience", "Kelso-branded sign-in and sign-out pages with owned branding standards and support text."),
 ]
 for i, kv in enumerate(TARGETS, 1):
     fill_row(t, i, list(kv))
 
-# ---------------- 9. ROADMAP ----------------
-doc.add_page_break()
-doc.add_heading("9. Remediation Roadmap", level=1)
+# ---------------- 7. ROADMAP ----------------
+chapter(doc, "7. Remediation Roadmap")
 para(doc, "The roadmap is organized by priority and operational dependency rather than fixed "
           "dates, keeping it appropriate for audit presentation while giving management a "
           "practical path forward.")
@@ -605,24 +559,24 @@ ROADMAP = [
     ("Medium-high — endpoint controls", "Validate endpoint posture",
      "Confirm Windows baseline and compliance coverage, review the Grant Local Admin policy, define mobile/BYOD strategy."),
     ("Ongoing governance", "Measure and sustain",
-     "Create a monthly dashboard for privileged roles, MFA registration, DLP incidents, sharing reports, guest reviews and service health; prepare tenant-to-tenant readiness evidence."),
+     "Create a monthly dashboard for privileged roles, MFA registration, DLP incidents, sharing reports, guest reviews and service health."),
 ]
 for i, r in enumerate(ROADMAP, 1):
     fill_row(t, i, list(r))
 
-doc.add_heading("9.1 Quick Wins / Medium Term / Strategic", level=2)
+doc.add_heading("7.1 Quick Wins / Medium Term / Strategic", level=2)
 t = make_table(doc, 4, 2, widths=[4.4, 11.6])
 header_cells(t, ["Horizon", "Focus"])
 HORIZON = [
-    ("Quick wins", "Review privileged role assignments, investigate forwarding activity, tighten sharing defaults and TAP scope, configure Entra company branding."),
+    ("Quick wins", "Review privileged role assignments, investigate forwarding activity, tighten sharing defaults and TAP scope, configure Kelso sign-in/sign-out branding in Entra."),
     ("Medium term", "Complete authentication methods migration, validate Intune compliance coverage, build the DLP policy set, establish app and guest review cycles."),
-    ("Strategic improvements", "Evaluate Entra ID P2/Governance, operationalize PIM, mature information protection and AI governance, complete tenant-to-tenant readiness program."),
+    ("Strategic improvements", "Evaluate Entra ID P2/Governance, operationalize PIM, mature information protection and AI governance."),
 ]
 for i, kv in enumerate(HORIZON, 1):
     fill_row(t, i, list(kv))
 
-# ---------------- 10. EVIDENCE ----------------
-doc.add_heading("10. Required Follow-Up Evidence", level=1)
+# ---------------- 8. EVIDENCE ----------------
+chapter(doc, "8. Required Follow-Up Evidence")
 para(doc, "To convert this portal-based assessment into a final evidence-backed audit pack, the "
           "following exports should be collected and retained securely. These are standard senior "
           "M365 engineering artifacts and will strengthen the final presentation.")
@@ -638,11 +592,11 @@ bullets(doc, [
     "Exchange forwarding, inbox rules, transport rules and outbound spam policy exports; SPF/DKIM/DMARC records for all production domains.",
     "Intune device inventory, compliance policies, configuration profiles, assignments and app protection policies; Grant Local Admin targeting.",
     "Microsoft Defender Secure Score, Defender for Office 365 policies and Defender for Endpoint onboarding status.",
-    "Hybrid identity / Entra Connect status, Exchange hybrid configuration and MigrationWiz permissions & scope.",
+    "Entra company branding configuration evidence (sign-in and sign-out experience) after implementation.",
 ])
 
-# ---------------- 11. EXEC RECOMMENDATIONS ----------------
-doc.add_heading("11. Executive Recommendations & Conclusion", level=1)
+# ---------------- 9. EXEC RECOMMENDATIONS ----------------
+chapter(doc, "9. Executive Recommendations & Conclusion")
 para(doc, "Kelso Industries should continue using Microsoft 365 as the strategic productivity and "
           "collaboration platform, while improving the operating controls around identity, data, "
           "devices, collaboration and service governance.")
@@ -654,8 +608,7 @@ bullets(doc, [
     "Move DLP from test/simulation mode to controlled enforcement after business validation.",
     "Review SharePoint and OneDrive permissions before expanding Copilot — Copilot inherits existing Microsoft 365 permissions.",
     "Establish service governance for Message Center, service health, roadmap changes, application ownership and agent ownership.",
-    "Complete the hybrid and tenant-to-tenant readiness validations before executing the migration program.",
-    "Treat tenant branding (Entra company branding / sign-in experience) as operational excellence and professional tenant experience.",
+    "Configure the Kelso-branded sign-in and sign-out experience as a quick win for user trust and professional tenant presentation.",
 ])
 t = make_table(doc, 2, 1, widths=[16.0])
 cell_text(t.rows[0].cells[0], "Final recommendation", bold=True, color="FFFFFF", size=11)
@@ -666,12 +619,10 @@ cell_text(t.rows[1].cells[0],
           "recommended improvements are practical and achievable using Microsoft 365 capabilities "
           "already present or clearly adjacent to the current environment. The strongest investment "
           "case is Entra ID P2 / Entra ID Governance for privileged identity. Completing this program "
-          "protects the business while preserving collaboration and productivity, and establishes a "
-          "governed target environment for the upcoming tenant-to-tenant migrations.", size=10)
+          "protects the business while preserving collaboration and productivity.", size=10)
 
 # ---------------- APPENDICES ----------------
-doc.add_page_break()
-doc.add_heading("Appendix A — Portal Validation Summary", level=1)
+chapter(doc, "Appendix A — Portal Validation Summary")
 para(doc, "The following items were revalidated during the live portal review after "
           "re-authentication. Temporary local screen captures were used only for reading visible "
           "portal state and were not embedded in this report.")
@@ -689,7 +640,7 @@ VAL = [
 for i, r in enumerate(VAL, 1):
     fill_row(t, i, list(r))
 
-doc.add_heading("Appendix B — Reference Tenant Observations", level=1)
+chapter(doc, "Appendix B — Reference Tenant Observations")
 para(doc, "A second tenant was reviewed as a reference point for Microsoft 365 maturity "
           "patterns. It must not be treated as a direct benchmark or as proof that every "
           "configuration in that tenant is best practice; its value is to show which Microsoft "
@@ -701,16 +652,15 @@ bullets(doc, [
     "Operational issues (directory sync, agents) were surfaced on the admin home page — supporting Kelso's need for service governance ownership.",
     "Caution: SMS and voice were enabled in the reference tenant; this should not be copied. Kelso should prefer stronger, phishing-resistant methods.",
 ])
-
-doc.add_heading("Appendix C — Consolidation Note", level=1)
-para(doc, "This report consolidates and supersedes the following working documents: the "
-          "client-ready clean assessment, the reference-practices assessment, the two "
-          "consultant-reviewed versions and the validated portal-review version. Wording follows "
-          "the consultant-reviewed standard: observations are reported as observed portal state; "
-          "items that could not be confirmed are explicitly marked 'Requires validation' or 'Not "
-          "confirmed during this assessment'; the tenant ID is masked in this client-facing "
-          "version; and overall risk is reported as Medium while Critical priority findings are "
-          "preserved where justified.", size=10)
+doc.add_paragraph()
+para(doc, "Consolidation note: this report consolidates and supersedes all prior working "
+          "documents (clean client version, reference-practices version, consultant-reviewed "
+          "versions and validated portal-review version). Observations are reported as observed "
+          "portal state; items that could not be confirmed are explicitly marked 'Requires "
+          "validation' or 'Not confirmed during this assessment'; the tenant ID is masked in "
+          "this client-facing version; overall risk is reported as Medium while Critical "
+          "priority findings are preserved where justified.", size=9.5, italic=True,
+     color="595959")
 
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
 doc.save(OUT)
