@@ -16,7 +16,22 @@ Graph.
         └── Microsoft Graph (app-only) → cloud user creation, B2B invitations, group assignment
 ```
 
-## Run it
+## Zero-setup tenant analysis (just enter a code) — run it in the cloud
+
+If all you want is the **read-only assessment** with the Codex-style
+"enter a code → approve in Microsoft" sign-in, you don't need to install
+anything locally. Deploy this agent to the cloud and it runs the OAuth
+**device-code** flow server-side (browsers can't — Microsoft's `/devicecode`
+endpoint has no CORS header). No app registration, no tenant ID.
+
+**One-click:** [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy)
+— or open the Render dashboard → New → Blueprint → pick this repo. See
+[`DEPLOY-CLOUD.md`](./DEPLOY-CLOUD.md) for the 6 steps (Render, Railway, Fly,
+Cloud Run). After it's up, paste the URL + key into **Settings → Integrations →
+Migration Agent**, then use **Migration Discovery → "Easy connect — no setup,
+just a code"**.
+
+## Run it (on-prem / migration execution)
 
 Requirements: Node.js 18+ on the host. For on-prem work, install the relevant
 PowerShell modules (`ActiveDirectory`, `ExchangeOnlineManagement`) and run the

@@ -1,0 +1,45 @@
+# One-click cloud deploy for the WorkPilot Migration Agent (Render.com).
+#
+# This is what makes the "enter a code" sign-in work like Codex: the agent runs
+# the OAuth 2.0 DEVICE CODE flow server-side (browsers can't, because Microsoft's
+# /devicecode endpoint sends no CORS header). It is hosted in the cloud — nothing
+# is installed on your PC. All Microsoft Graph access is READ-ONLY.
+#
+# How to deploy (2 minutes, no local install):
+#   1. Push this repo to GitHub (already done).
+#   2. Go to https://dashboard.render.com  ->  New  ->  Blueprint.
+#   3. Pick this repository. Render reads this file and creates the service.
+#   4. After it deploys, open the service URL (https://workpilot-agent-XXXX.onrender.com)
+#      and copy the auto-generated AGENT_API_KEY from the service's "Environment" tab.
+#   5. In the portal: Settings -> Integrations -> Migration Agent ->
+#      paste the URL + the AGENT_API_KEY, enable it, Save.
+#   6. Open Migration Discovery -> "Easy connect — no setup, just a code".
+#      You get a code; sign in once as the customer admin at microsoft.com/devicelogin,
+#      approve the Microsoft Graph consent, and the read-only analysis runs.
+
+services:
+  - type: web
+    name: workpilot-agent
+    runtime: node
+    plan: free
+    rootDir: agent
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # Bind to all interfaces so Render's HTTPS proxy can reach it.
+      - key: HOST
+        value: 0.0.0.0
+      # Strong random shared secret — Render generates it. Copy it into the portal.
+      - key: AGENT_API_KEY
+        generateValue: true
+      # Only the portal origins may call the agent (CORS). Add your one.com domain here.
+      - key: ALLOWED_ORIGINS
+        value: https://sorrento.cloud,https://www.sorrento.cloud,https://mohammadlaghzaoui.github.io
+      # Public Microsoft client used for device code — no app registration needed.
+      - key: DISCOVERY_CLIENT_ID
+        value: 14d82eec-204b-4c2f-b7e8-296a70dab67e
+      # Keep raw PowerShell execution OFF — discovery is read-only Graph only.
+      - key: ALLOW_RAW_POWERSHELL
+        value: "false"
