@@ -1,8 +1,8 @@
-import { useMemo, useState } from 'react';
-import { Radar, ShieldCheck, Loader2, FileSpreadsheet, RefreshCw, Building2, Users2, Boxes, Globe, MonitorSmartphone, Sparkles, Gauge, AlertTriangle, ListChecks, HardDrive } from 'lucide-react';
-import { Badge, Button, Card, PageHeader, ProgressBar, Section } from '../components/ui';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Radar, ShieldCheck, Loader2, FileSpreadsheet, RefreshCw, Building2, Users2, Boxes, Globe, Sparkles, Gauge, ListChecks, HardDrive } from 'lucide-react';
+import { Badge, Button, Card, PageHeader, Section } from '../components/ui';
 import { DonutChart, HBarChart } from '../components/charts';
-import { runDiscovery, DiscoveryResult, DISCOVERY_SCOPES } from '../services/graphDiscovery';
+import { runDiscovery, DiscoveryResult, DISCOVERY_SCOPES, LogLevel } from '../services/graphDiscovery';
 import { assess } from '../services/migrationAssessment';
 import { downloadWorkbook, Sheet } from '../services/excelExport';
 import { currentAccount } from '../services/sso';
@@ -14,27 +14,33 @@ import { Link } from 'react-router-dom';
 export default function Discovery() {
   const [result, setResult] = useState<DiscoveryResult | null>(() => load<DiscoveryResult | null>('discovery-result', null));
   const [busy, setBusy] = useState(false);
-  const [step, setStep] = useState('');
+  const [lines, setLines] = useState<{ text: string; level: LogLevel }[]>([]);
   const [error, setError] = useState('');
+  const logRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { logRef.current?.scrollTo({ top: logRef.current.scrollHeight }); }, [lines]);
+  const addLine = (text: string, level: LogLevel = 'info') =>
+    setLines((prev) => [...prev, { text: level === 'cmd' ? text : `[${new Date().toLocaleTimeString('en-GB')}] ${text}`, level }]);
   const [ai, setAi] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
   const ssoReady = getSSOSettings().enabled && !!getSSOSettings().clientId;
   const analysis = useMemo(() => (result ? assess(result) : null), [result]);
 
   const run = async () => {
-    setBusy(true); setError(''); setAi('');
+    setBusy(true); setError(''); setAi(''); setLines([]);
     try {
       if (!(await currentAccount())) {
         setError('Sign in with Microsoft 365 first (Settings → Sign-in). Discovery uses your delegated, read-only Graph access.');
         return;
       }
-      const r = await runDiscovery(setStep);
+      const r = await runDiscovery(addLine);
+      addLine(`Discovery complete — ${r.users.length} users, ${r.groups.length} groups, ~${Math.round((r.usage.mailboxTotalGB + r.usage.oneDriveTotalGB + r.usage.spoTotalGB))} GB data. READ-ONLY: nothing was written.`, 'ok');
       setResult(r);
       save('discovery-result', r);
     } catch (e) {
+      addLine(`ERROR: ${e instanceof Error ? e.message : e}`, 'err');
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false); setStep('');
+      setBusy(false);
     }
   };
 
@@ -151,11 +157,29 @@ export default function Discovery() {
           </Button>
           {result && <Button variant="secondary" onClick={exportExcel}><FileSpreadsheet size={15} /> Export Excel workbook</Button>}
           {result && aiEnabled() && <Button variant="ai" onClick={analyze} disabled={aiBusy}>{aiBusy ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />} AI migration analysis</Button>}
-          {busy && <span className="text-sm text-slate-500">{step}</span>}
+          {busy && <span className="text-sm text-slate-500">Querying Microsoft Graph…</span>}
         </div>
         {!ssoReady && <p className="mt-3 text-sm text-amber-600 dark:text-amber-400">Microsoft 365 SSO is not configured yet — set it up in <Link to="/settings" className="font-semibold hover:underline">Settings → Sign-in</Link>. The SSO app needs admin consent for the read scopes above.</p>}
         {error && <p className="mt-3 text-sm text-red-500">{error}</p>}
       </Card>
+
+      {/* Live Microsoft Graph console */}
+      {lines.length > 0 && (
+        <Card className="mb-5 overflow-hidden p-0">
+          <div className="flex items-center gap-2 border-b border-slate-700 bg-slate-900 px-3 py-2">
+            <span className="h-3 w-3 rounded-full bg-red-500" /><span className="h-3 w-3 rounded-full bg-amber-400" /><span className="h-3 w-3 rounded-full bg-emerald-500" />
+            <span className="ml-2 text-xs font-medium text-slate-300">Microsoft Graph — live read-only discovery {busy && <span className="animate-pulse">· running</span>}</span>
+          </div>
+          <div ref={logRef} className="h-72 overflow-y-auto bg-[#012456] p-3 font-mono text-xs leading-relaxed">
+            {lines.map((l, i) => (
+              <div key={i} className={`whitespace-pre-wrap break-all ${{ cmd: 'text-yellow-300', info: 'text-cyan-300', ok: 'text-emerald-400', warn: 'text-amber-300', err: 'text-red-400' }[l.level]}`}>
+                {l.level === 'cmd' ? <><span className="text-white">PS C:\WorkPilot&gt; </span>{l.text}</> : l.text}
+              </div>
+            ))}
+            {busy && <span className="inline-block h-3.5 w-2 animate-pulse bg-slate-200 align-middle" />}
+          </div>
+        </Card>
+      )}
 
       {result && (
         <div className="space-y-5">

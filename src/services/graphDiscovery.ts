@@ -22,6 +22,10 @@ export const DISCOVERY_SCOPES = [
 
 const V1 = 'https://graph.microsoft.com/v1.0';
 
+export type LogLevel = 'cmd' | 'info' | 'ok' | 'warn' | 'err';
+export type Logger = (text: string, level?: LogLevel) => void;
+const noop: Logger = () => {};
+
 async function get<T = unknown>(path: string, scopes = DISCOVERY_SCOPES): Promise<T> {
   const token = await getGraphToken(scopes);
   const res = await fetch(`${V1}${path}`, {
@@ -138,10 +142,10 @@ async function getReportCsv(path: string): Promise<Record<string, string>[]> {
 
 const toGB = (bytes: string | number) => Math.round((Number(bytes) || 0) / 1073741824 * 100) / 100;
 
-export async function runUsage(onProgress: (s: string) => void): Promise<UsageStats> {
+export async function runUsage(log: Logger = noop): Promise<UsageStats> {
   const empty: UsageStats = { mailboxCount: 0, mailboxTotalGB: 0, mailboxLargest: [], mailboxOver50GB: 0, archiveCount: 0, oneDriveCount: 0, oneDriveTotalGB: 0, oneDriveOver100GB: 0, spoSiteCount: 0, spoTotalGB: 0, available: false };
   try {
-    onProgress('Reading mailbox usage report (read-only) …');
+    log("Get-MgReportMailboxUsageDetail -Period D30", 'cmd');
     const mbx = await getReportCsv("/reports/getMailboxUsageDetail(period='D30')?$format=text/csv");
     const sizeKey = Object.keys(mbx[0] ?? {}).find((k) => /Storage Used/i.test(k)) ?? 'Storage Used (Byte)';
     const upnKey = Object.keys(mbx[0] ?? {}).find((k) => /User Principal Name/i.test(k)) ?? 'User Principal Name';
@@ -149,17 +153,20 @@ export async function runUsage(onProgress: (s: string) => void): Promise<UsageSt
     const mailboxes = mbx.map((r) => ({ upn: r[upnKey] || '(hidden)', gb: toGB(r[sizeKey]), archive: archiveKey ? /true|yes/i.test(r[archiveKey]) : false }));
     const mailboxTotalGB = Math.round(mailboxes.reduce((a, m) => a + m.gb, 0));
     const largest = [...mailboxes].sort((a, b) => b.gb - a.gb).slice(0, 10).map((m) => ({ upn: m.upn, gb: m.gb }));
+    log(`→ ${mailboxes.length} mailbox(es), ${mailboxTotalGB.toLocaleString()} GB total (largest ${largest[0]?.gb ?? 0} GB)`, 'ok');
 
-    onProgress('Reading OneDrive usage report …');
+    log("Get-MgReportOneDriveUsageAccountDetail -Period D30", 'cmd');
     const od = await getReportCsv("/reports/getOneDriveUsageAccountDetail(period='D30')?$format=text/csv");
     const odSizeKey = Object.keys(od[0] ?? {}).find((k) => /Storage Used/i.test(k)) ?? 'Storage Used (Byte)';
     const odSizes = od.map((r) => toGB(r[odSizeKey]));
     const oneDriveTotalGB = Math.round(odSizes.reduce((a, b) => a + b, 0));
+    log(`→ ${od.length} OneDrive account(s), ${oneDriveTotalGB.toLocaleString()} GB total`, 'ok');
 
-    onProgress('Reading SharePoint site usage report …');
+    log("Get-MgReportSharePointSiteUsageDetail -Period D30", 'cmd');
     const spo = await getReportCsv("/reports/getSharePointSiteUsageDetail(period='D30')?$format=text/csv");
     const spoSizeKey = Object.keys(spo[0] ?? {}).find((k) => /Storage Used/i.test(k)) ?? 'Storage Used (Byte)';
     const spoTotalGB = Math.round(spo.reduce((a, r) => a + toGB(r[spoSizeKey]), 0));
+    log(`→ ${spo.length} SharePoint site(s), ${spoTotalGB.toLocaleString()} GB total`, 'ok');
 
     return {
       mailboxCount: mailboxes.length,
@@ -175,6 +182,7 @@ export async function runUsage(onProgress: (s: string) => void): Promise<UsageSt
       available: true,
     };
   } catch (e) {
+    log(`→ usage reports unavailable: ${e instanceof Error ? e.message : e}`, 'warn');
     return { ...empty, note: `Usage reports unavailable: ${e instanceof Error ? e.message : e}. Needs Reports.Read.All; check tenant concealment setting.` };
   }
 }
@@ -183,16 +191,23 @@ function skuName(skuId: string, skus: { skuId: string; skuPartNumber: string }[]
   return skus.find((s) => s.skuId === skuId)?.skuPartNumber ?? skuId;
 }
 
-export async function runDiscovery(onProgress: (step: string) => void): Promise<DiscoveryResult> {
-  onProgress('Reading organization & domains …');
+export async function runDiscovery(log: Logger = noop): Promise<DiscoveryResult> {
+  log(`Connect-MgGraph -Scopes ${DISCOVERY_SCOPES.map((s) => `'${s}'`).join(',')}`, 'cmd');
+  log('Authenticating with delegated, READ-ONLY scopes (GET only) ...', 'info');
+
+  log('Get-MgOrganization | Select DisplayName,Id', 'cmd');
   const orgData = await get<{ value: { displayName: string; id: string }[] }>('/organization?$select=displayName,id');
   const org = orgData.value?.[0] ?? { displayName: 'Unknown', id: '' };
+  log(`→ Tenant "${org.displayName}" (${org.id})`, 'ok');
+
+  log('Get-MgDomain', 'cmd');
   const domainData = await get<{ value: { id: string; isDefault: boolean; isVerified: boolean; supportedServices: string[] }[] }>('/domains');
   const domains: DiscoveryDomain[] = (domainData.value ?? []).map((d) => ({
     id: d.id, isDefault: d.isDefault, isVerified: d.isVerified, supportedServices: (d.supportedServices ?? []).join(', '),
   }));
+  log(`→ ${domains.length} domain(s): ${domains.map((d) => d.id).slice(0, 5).join(', ')}${domains.length > 5 ? ' …' : ''}`, 'ok');
 
-  onProgress('Reading subscribed licenses …');
+  log('Get-MgSubscribedSku', 'cmd');
   const skuData = await get<{ value: { skuId: string; skuPartNumber: string; consumedUnits: number; prepaidUnits: { enabled: number } }[] }>('/subscribedSkus');
   const skus = skuData.value ?? [];
   const licenses: DiscoveryLicense[] = skus.map((s) => ({
@@ -201,9 +216,11 @@ export async function runDiscovery(onProgress: (step: string) => void): Promise<
     consumed: s.consumedUnits ?? 0,
     available: (s.prepaidUnits?.enabled ?? 0) - (s.consumedUnits ?? 0),
   }));
+  log(`→ ${licenses.length} license SKU(s), ${licenses.reduce((a, l) => a + l.consumed, 0)} seats consumed`, 'ok');
 
-  onProgress('Reading users & assigned licenses …');
+  log('Get-MgUser -All -Property displayName,upn,mail,userType,licenses,signInActivity …', 'cmd');
   const rawUsers = await getAll<Record<string, unknown>>('/users?$select=displayName,userPrincipalName,mail,userType,accountEnabled,department,jobTitle,usageLocation,assignedLicenses,createdDateTime,signInActivity&$top=999');
+  log(`→ ${rawUsers.length} user object(s) retrieved`, 'ok');
   const users: DiscoveryUser[] = rawUsers.map((u) => ({
     displayName: String(u.displayName ?? ''),
     userPrincipalName: String(u.userPrincipalName ?? ''),
@@ -219,8 +236,9 @@ export async function runDiscovery(onProgress: (step: string) => void): Promise<
   }));
   const guests = users.filter((u) => u.userType === 'Guest').length;
   const disabled = users.filter((u) => !u.accountEnabled).length;
+  log(`   ${guests} guest(s), ${disabled} disabled, ${users.length - guests - disabled} active member(s)`, 'info');
 
-  onProgress('Reading groups & teams …');
+  log('Get-MgGroup -All -Property displayName,groupTypes,resourceProvisioningOptions …', 'cmd');
   const rawGroups = await getAll<Record<string, unknown>>('/groups?$select=displayName,mail,groupTypes,securityEnabled,mailEnabled,visibility,resourceProvisioningOptions&$top=999');
   const groups: DiscoveryGroup[] = rawGroups.map((g) => {
     const types = (g.groupTypes as string[]) ?? [];
@@ -241,19 +259,21 @@ export async function runDiscovery(onProgress: (step: string) => void): Promise<
   const teams = groups.filter((g) => g.isTeam).length;
   const securityGroups = groups.filter((g) => g.groupType.includes('Security')).length;
   const distributionGroups = groups.filter((g) => g.groupType === 'Distribution').length;
+  log(`→ ${groups.length} group(s): ${m365Groups} M365, ${teams} Teams, ${securityGroups} security, ${distributionGroups} distribution`, 'ok');
 
-  onProgress('Reading managed devices …');
+  log('Get-MgDeviceManagementManagedDevice -All', 'cmd');
   let devices = { total: 0, byOs: {} as Record<string, number> };
   try {
     const dev = await getAll<{ operatingSystem?: string }>('/deviceManagement/managedDevices?$select=operatingSystem&$top=999', 10000);
     const byOs: Record<string, number> = {};
     for (const d of dev) { const os = d.operatingSystem || 'Unknown'; byOs[os] = (byOs[os] ?? 0) + 1; }
     devices = { total: dev.length, byOs };
+    log(`→ ${dev.length} managed device(s): ${Object.entries(byOs).map(([o, n]) => `${o} ${n}`).join(', ') || 'none'}`, 'ok');
   } catch {
-    onProgress('Device read skipped (no Intune scope/licence).');
+    log('→ device read skipped (no Intune scope/licence)', 'warn');
   }
 
-  const usage = await runUsage(onProgress);
+  const usage = await runUsage(log);
 
   return {
     org: { displayName: org.displayName, tenantId: org.id, verifiedDomains: domains.filter((d) => d.isVerified).length },
