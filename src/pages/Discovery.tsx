@@ -6,6 +6,7 @@ import { runDiscovery, DiscoveryResult, DISCOVERY_SCOPES, LogLevel, useDiscovery
 import { connectTenant, connectedTenant, disconnectTenant, getDiscoveryToken, discoveryAuthConfigured, getDiscoveryAuth, saveDiscoveryAuth } from '../services/discoveryAuth';
 import { saveTenantResult, loadTenantResult, tenantIndex, removeTenantResult, recordExportAudit } from '../services/tenantStore';
 import { cloudAgentConfigured, startDeviceDiscovery, trackDeviceDiscovery, DeviceSession } from '../services/cloudDiscovery';
+import { requestDeviceCode, pollForToken, getBrowserDeviceToken, clearBrowserDeviceToken, DeviceCode } from '../services/browserDeviceAuth';
 import { getSession } from '../services/auth';
 import { assess } from '../services/migrationAssessment';
 import { downloadWorkbook, Sheet } from '../services/excelExport';
@@ -34,7 +35,36 @@ export default function Discovery() {
   const authReady = discoveryAuthConfigured();
   const cloudReady = cloudAgentConfigured();
 
-  // ----- Zero-setup device-code flow via the cloud agent -----
+  // ----- Browser-only zero-setup device-code flow (no agent, no app reg) -----
+  const [code, setCode] = useState<DeviceCode | null>(null);
+  const [codePhase, setCodePhase] = useState<'idle' | 'awaiting' | 'collecting'>('idle');
+
+  const codeConnect = async () => {
+    setError(''); setLines([]); setCode(null); setResult(null);
+    try {
+      const dc = await requestDeviceCode();
+      setCode(dc);
+      setCodePhase('awaiting');
+      const { tenantId } = await pollForToken(dc);
+      setCodePhase('collecting');
+      setBusy(true);
+      addLine(`Signed in (tenant ${tenantId}). Starting read-only analysis ...`, 'ok');
+      useDiscoveryToken(getBrowserDeviceToken);
+      const r = await runDiscovery(addLine);
+      addLine('Read-only assessment complete. No tenant changes were made.', 'ok');
+      setResult(r);
+      save('discovery-result', r);
+      saveTenantResult(r);
+      setTenants(tenantIndex());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      addLine(`ERROR: ${e instanceof Error ? e.message : e}`, 'err');
+    } finally {
+      setBusy(false); setCodePhase('idle'); setCode(null); clearBrowserDeviceToken();
+    }
+  };
+
+  // ----- Zero-setup device-code flow via the cloud agent (fallback) -----
   const [device, setDevice] = useState<DeviceSession | null>(null);
 
   const easyConnect = async () => {
