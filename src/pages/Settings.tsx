@@ -21,6 +21,7 @@ import { agentHealth } from '../services/agent';
 import { addUser, changePassword, getSession, listUsers, removeUser } from '../services/auth';
 import { getRole, setRole, can, ROLES, Role, roleLabel } from '../services/rbac';
 import { getAuditLog, agentConfigured, AuditEntry } from '../services/agent';
+import { getDiscoveryAuth, saveDiscoveryAuth } from '../services/discoveryAuth';
 import { load, save } from '../store/useLocalStorage';
 import { NAV } from '../components/Layout';
 import { ScrollText } from 'lucide-react';
@@ -95,7 +96,7 @@ export default function Settings() {
         </div>
         <div className="min-w-0">
           {tab === 'ai' && <AICard />}
-          {tab === 'sso' && <div className="space-y-5"><SSOCard /><GoogleSSOCard /></div>}
+          {tab === 'sso' && <div className="space-y-5"><SSOCard /><GoogleSSOCard /><DiscoveryConnCard /></div>}
           {tab === 'integrations' && <IntegrationsTab />}
           {tab === 'branding' && <BrandingCard />}
           {tab === 'account' && <AccountCard />}
@@ -792,6 +793,24 @@ function AuditCard() {
             </table>
           </div>
         )}
+      </Section>
+    </Card>
+  );
+}
+
+function DiscoveryConnCard() {
+  const [s, setS] = useState(getDiscoveryAuth());
+  const set = (clientId: string) => { const next = { ...s, clientId }; setS(next); saveDiscoveryAuth(next); };
+  return (
+    <Card className="p-5 space-y-3">
+      <Section title="Migration Discovery connection (multi-tenant, read-only)">
+        <p className="text-sm text-slate-500 dark:text-slate-400">
+          A separate <strong>multi-tenant</strong> app used only for read-only migration discovery. The engineer signs in interactively to each customer tenant — no tenant ID is configured here, so the same portal analyzes any tenant. Keep this separate from the portal SSO above.
+        </p>
+        <Field label="Multi-tenant app Client ID (SPA, public client)" value={s.clientId} onChange={set} placeholder="00000000-0000-0000-0000-000000000000" />
+        <div className="rounded-lg bg-slate-50 dark:bg-slate-900 p-3 text-xs text-slate-500 dark:text-slate-400">
+          <strong>One-time setup (in YOUR app tenant):</strong> Entra admin center → App registrations → New → <em>Accounts in any organizational directory (multitenant)</em> → platform <strong>Single-page application</strong>, redirect URI = this portal URL. Add delegated Microsoft Graph read scopes: User.Read.All, Group.Read.All, Directory.Read.All, Organization.Read.All, Domain.Read.All, Reports.Read.All, Sites.Read.All, DeviceManagementManagedDevices.Read.All. Each customer admin consents at first sign-in. Paste the Application (client) ID here.
+        </div>
       </Section>
     </Card>
   );

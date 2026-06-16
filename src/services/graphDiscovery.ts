@@ -6,7 +6,17 @@ import { getGraphToken } from './sso';
  * Every call here uses only *.Read.All delegated scopes and only GET requests.
  * Nothing is written back to the tenant. Used to build a migration analysis
  * and to fill the discovery Excel workbook.
+ *
+ * The token provider is pluggable: by default it uses the portal SSO token, but
+ * the Discovery page swaps in the per-customer-tenant token (discoveryAuth) so
+ * the same portal can analyze many different tenants interactively.
  */
+
+type TokenProvider = (scopes: string[]) => Promise<string>;
+let tokenProvider: TokenProvider = getGraphToken;
+export function useDiscoveryToken(fn: TokenProvider | null) {
+  tokenProvider = fn ?? getGraphToken;
+}
 
 // Read-only scopes only. The consent screen will show these as read permissions.
 export const DISCOVERY_SCOPES = [
@@ -27,7 +37,7 @@ export type Logger = (text: string, level?: LogLevel) => void;
 const noop: Logger = () => {};
 
 async function get<T = unknown>(path: string, scopes = DISCOVERY_SCOPES): Promise<T> {
-  const token = await getGraphToken(scopes);
+  const token = await tokenProvider(scopes);
   const res = await fetch(`${V1}${path}`, {
     method: 'GET',
     headers: { authorization: `Bearer ${token}`, ConsistencyLevel: 'eventual' },
@@ -40,7 +50,7 @@ async function get<T = unknown>(path: string, scopes = DISCOVERY_SCOPES): Promis
 async function getAll<T = Record<string, unknown>>(path: string, cap = 5000): Promise<T[]> {
   const out: T[] = [];
   let url: string | null = path;
-  const token = await getGraphToken();
+  const token = await tokenProvider(DISCOVERY_SCOPES);
   while (url && out.length < cap) {
     const full: string = url.startsWith('http') ? url : `${V1}${url}`;
     const res = await fetch(full, { headers: { authorization: `Bearer ${token}`, ConsistencyLevel: 'eventual' } });
@@ -124,7 +134,7 @@ export interface DiscoveryResult {
 
 /** Fetch a Graph usage report (CSV) read-only and parse it into rows. */
 async function getReportCsv(path: string): Promise<Record<string, string>[]> {
-  const token = await getGraphToken(['Reports.Read.All']);
+  const token = await tokenProvider(['Reports.Read.All']);
   const res = await fetch(`${V1}${path}`, { headers: { authorization: `Bearer ${token}` } });
   if (!res.ok) throw new Error(`Graph ${res.status} on ${path}`);
   const text = await res.text();

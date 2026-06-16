@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Radar, ShieldCheck, Loader2, FileSpreadsheet, RefreshCw, Building2, Users2, Boxes, Globe, Sparkles, Gauge, ListChecks, HardDrive } from 'lucide-react';
 import { Badge, Button, Card, PageHeader, Section } from '../components/ui';
 import { DonutChart, HBarChart } from '../components/charts';
-import { runDiscovery, DiscoveryResult, DISCOVERY_SCOPES, LogLevel } from '../services/graphDiscovery';
+import { runDiscovery, DiscoveryResult, DISCOVERY_SCOPES, LogLevel, useDiscoveryToken } from '../services/graphDiscovery';
+import { connectTenant, connectedTenant, disconnectTenant, getDiscoveryToken, discoveryAuthConfigured } from '../services/discoveryAuth';
 import { assess } from '../services/migrationAssessment';
 import { downloadWorkbook, Sheet } from '../services/excelExport';
 import { currentAccount } from '../services/sso';
@@ -23,8 +24,28 @@ export default function Discovery() {
     setLines((prev) => [...prev, { text: level === 'cmd' ? text : `[${new Date().toLocaleTimeString('en-GB')}] ${text}`, level }]);
   const [ai, setAi] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
-  const ssoReady = getSSOSettings().enabled && !!getSSOSettings().clientId;
   const analysis = useMemo(() => (result ? assess(result) : null), [result]);
+  const [connected, setConnected] = useState<{ username: string; tenantId: string } | null>(() => connectedTenant());
+  const [connecting, setConnecting] = useState(false);
+  const authReady = discoveryAuthConfigured();
+
+  const connect = async () => {
+    setConnecting(true); setError('');
+    try {
+      const info = await connectTenant(DISCOVERY_SCOPES);
+      setConnected({ username: info.username, tenantId: info.tenantId });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setConnecting(false);
+    }
+  };
+  const disconnect = async () => {
+    await disconnectTenant();
+    setConnected(null);
+    setResult(null);
+    setLines([]);
+  };
 
   // ----- Template-aware export (uses the engineer's own Excel template) -----
   const [tpl, setTpl] = useState<TemplateAnalysis | null>(null);
@@ -56,9 +77,17 @@ export default function Discovery() {
   const run = async () => {
     setBusy(true); setError(''); setAi(''); setLines([]);
     try {
-      if (!(await currentAccount())) {
-        setError('Sign in with Microsoft 365 first (Settings → Sign-in). Discovery uses your delegated, read-only Graph access.');
-        return;
+      // Use the connected CUSTOMER tenant token (multi-tenant, no tenant ID).
+      // Fall back to the portal SSO token only if no discovery connection is set.
+      if (authReady) {
+        if (!connected) { setError('Connect a customer tenant first (button above).'); return; }
+        useDiscoveryToken(getDiscoveryToken);
+      } else {
+        if (!(await currentAccount())) {
+          setError('Connect a customer tenant (configure the Migration Discovery connection in Settings → Sign-in), or sign in with portal SSO.');
+          return;
+        }
+        useDiscoveryToken(null);
       }
       const r = await runDiscovery(addLine);
       addLine(`Discovery complete — ${r.users.length} users, ${r.groups.length} groups, ~${Math.round((r.usage.mailboxTotalGB + r.usage.oneDriveTotalGB + r.usage.spoTotalGB))} GB data. READ-ONLY: nothing was written.`, 'ok');
@@ -178,16 +207,39 @@ export default function Discovery() {
         </div>
       </Card>
 
+      {/* Connect the customer tenant — interactive popup login, no tenant ID */}
+      <Card className="mb-5 p-5 border-blue-200 dark:border-blue-800">
+        <Section title="Connect the customer tenant to analyze">
+          <p className="mb-3 text-sm text-slate-500 dark:text-slate-400">
+            Sign in <strong>interactively</strong> with the customer tenant's admin credentials — a Microsoft popup opens, you log in (and approve the MFA code) for <em>that</em> tenant. No tenant ID needed; the same portal works for every migration. Read-only consent only.
+          </p>
+          {connected ? (
+            <div className="flex flex-wrap items-center gap-3">
+              <Badge color="green">Connected</Badge>
+              <span className="text-sm font-medium text-slate-700 dark:text-slate-200">{connected.username}</span>
+              <span className="text-xs text-slate-400">tenant {connected.tenantId}</span>
+              <Button variant="secondary" onClick={disconnect}>Disconnect / switch tenant</Button>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-3">
+              <Button onClick={connect} disabled={connecting || !authReady}>
+                {connecting ? <Loader2 size={16} className="animate-spin" /> : <Building2 size={16} />} Connect customer tenant (sign in)
+              </Button>
+              {!authReady && <span className="text-sm text-amber-600 dark:text-amber-400">Configure the multi-tenant app once in <Link to="/settings" className="font-semibold hover:underline">Settings → Sign-in → Migration Discovery connection</Link>.</span>}
+            </div>
+          )}
+        </Section>
+      </Card>
+
       <Card className="mb-5 p-5">
         <div className="flex flex-wrap items-center gap-3">
-          <Button onClick={run} disabled={busy}>
-            {busy ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />} {result ? 'Re-run discovery' : 'Run discovery (read-only)'}
+          <Button onClick={run} disabled={busy || (authReady && !connected)}>
+            {busy ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />} {result ? 'Re-run discovery' : 'Run migration analysis (read-only)'}
           </Button>
           {result && <Button variant="secondary" onClick={exportExcel}><FileSpreadsheet size={15} /> Export Excel workbook</Button>}
           {result && aiEnabled() && <Button variant="ai" onClick={analyze} disabled={aiBusy}>{aiBusy ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />} AI migration analysis</Button>}
           {busy && <span className="text-sm text-slate-500">Querying Microsoft Graph…</span>}
         </div>
-        {!ssoReady && <p className="mt-3 text-sm text-amber-600 dark:text-amber-400">Microsoft 365 SSO is not configured yet — set it up in <Link to="/settings" className="font-semibold hover:underline">Settings → Sign-in</Link>. The SSO app needs admin consent for the read scopes above.</p>}
         {error && <p className="mt-3 text-sm text-red-500">{error}</p>}
       </Card>
 
