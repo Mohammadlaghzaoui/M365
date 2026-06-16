@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Radar, ShieldCheck, Loader2, FileSpreadsheet, RefreshCw, Building2, Users2, Boxes, Globe, Sparkles, Gauge, ListChecks, HardDrive } from 'lucide-react';
+import { Radar, ShieldCheck, Loader2, FileSpreadsheet, RefreshCw, Building2, Users2, Boxes, Globe, Sparkles, Gauge, ListChecks, HardDrive, Trash2 } from 'lucide-react';
 import { Badge, Button, Card, CopyButton, PageHeader, Section } from '../components/ui';
 import { DonutChart, HBarChart } from '../components/charts';
 import { runDiscovery, DiscoveryResult, DISCOVERY_SCOPES, LogLevel, useDiscoveryToken } from '../services/graphDiscovery';
@@ -109,6 +109,23 @@ export default function Discovery() {
     setLines([]);
   };
 
+  /** One-click: sign out of the customer tenant AND erase every trace of its data. */
+  const disconnectWipe = async () => {
+    const name = result?.org.displayName ?? connected?.tenantId ?? 'this tenant';
+    if (!window.confirm(`Disconnect and permanently erase all collected data for "${name}"? This clears the analysis, the stored per-tenant copy, and the sign-in token from this browser.`)) return;
+    const tid = result?.org.tenantId ?? connected?.tenantId;
+    if (tid) removeTenantResult(tid);
+    try { await disconnectTenant(); } catch { /* device-code flow has no MSAL session */ }
+    clearOnecomToken();
+    save('discovery-result', null);
+    setConnected(null);
+    setResult(null);
+    setAi('');
+    setLines([]);
+    setTpl(null); setTplDone(null); setTplName('');
+    setTenants(tenantIndex());
+  };
+
   // ----- Template-aware export (uses the engineer's own Excel template) -----
   const [tpl, setTpl] = useState<TemplateAnalysis | null>(null);
   const [tplName, setTplName] = useState('');
@@ -126,10 +143,10 @@ export default function Discovery() {
     }
   };
 
-  const fillTemplate = () => {
+  const fillTemplate = async () => {
     if (!tpl || !result) return;
     try {
-      const summary = fillAndDownload(tpl, { d: result, a: analysis }, tplName.replace(/\.xlsx?$/i, '') + '-filled.xlsx');
+      const summary = await fillAndDownload(tpl, { d: result, a: analysis }, tplName.replace(/\.xlsx?$/i, '') + '-filled.xlsx');
       setTplDone(summary);
     } catch (e) {
       setTplErr(e instanceof Error ? e.message : String(e));
@@ -183,6 +200,14 @@ export default function Discovery() {
           ['Security groups', result.securityGroups],
           ['Distribution groups', result.distributionGroups],
           ['Managed devices', result.devices.total],
+          ['Compliant devices', result.devices.compliant ?? 0],
+          ['Non-compliant devices', result.devices.nonCompliant ?? 0],
+          ['Compliance policies', (result.compliancePolicies ?? []).length],
+          ['Conditional Access policies', result.caPolicies.length],
+          ['License SKUs', result.licenses.length],
+          ['Licensed seats consumed', result.licenses.reduce((a, l) => a + l.consumed, 0)],
+          ['SharePoint sites', result.sharePointSites.length],
+          ['Total data (GB)', Math.round(result.usage.mailboxTotalGB + result.usage.oneDriveTotalGB + result.usage.spoTotalGB)],
           ['Generated', new Date(result.fetchedAt).toLocaleString()],
         ],
       },
@@ -207,9 +232,19 @@ export default function Discovery() {
         rows: result.domains.map((d) => [d.id, d.isDefault ? 'Yes' : 'No', d.isVerified ? 'Yes' : 'No', d.supportedServices]),
       },
       {
-        name: 'Devices',
+        name: 'Devices by OS',
         columns: ['Operating system', 'Count'],
         rows: Object.entries(result.devices.byOs).map(([os, n]) => [os, n]),
+      },
+      {
+        name: 'Device inventory',
+        columns: ['Device', 'User', 'OS', 'OS version', 'Compliance', 'Ownership', 'Manufacturer', 'Model', 'Serial', 'Encrypted', 'Last sync', 'Enrolled'],
+        rows: (result.deviceInventory ?? []).map((d) => [d.deviceName, d.user, d.os, d.osVersion, d.compliance, d.ownership, d.manufacturer, d.model, d.serialNumber, d.encrypted ? 'Yes' : 'No', d.lastSync, d.enrolled]),
+      },
+      {
+        name: 'Compliance policies',
+        columns: ['Policy', 'Platform'],
+        rows: (result.compliancePolicies ?? []).map((p) => [p.name, p.platform]),
       },
       {
         name: 'SharePoint sites',
@@ -405,6 +440,11 @@ export default function Discovery() {
           </Button>
           {result && <Button variant="secondary" onClick={exportExcel}><FileSpreadsheet size={15} /> Export Excel workbook</Button>}
           {result && aiEnabled() && <Button variant="ai" onClick={analyze} disabled={aiBusy}>{aiBusy ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />} AI migration analysis</Button>}
+          {(result || connected) && (
+            <button onClick={disconnectWipe} disabled={busy} className="inline-flex items-center gap-1.5 rounded-lg border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-900/20 px-3 py-2 text-sm font-medium text-red-600 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-900/40 disabled:opacity-50">
+              <Trash2 size={15} /> Disconnect &amp; wipe tenant data
+            </button>
+          )}
           {busy && <span className="text-sm text-slate-500">Querying Microsoft Graph…</span>}
         </div>
         {error && <p className="mt-3 text-sm text-red-500">{error}</p>}

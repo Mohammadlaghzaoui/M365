@@ -1,18 +1,19 @@
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import { DiscoveryResult } from './graphDiscovery';
 import { Assessment } from './migrationAssessment';
 
 /**
- * Template-aware Excel filler.
+ * Template-aware Excel filler — STYLE PRESERVING.
  *
  * The engineer uploads THEIR OWN .xlsx template (locally, in the browser — it
- * never leaves the machine). We read its sheet names and header rows, map each
- * column header to a discovery field via a synonym dictionary (English + Dutch),
- * fill the data rows under the existing headers, and write the workbook back —
- * preserving the original tabs, headers and any sheets we don't touch.
+ * never leaves the machine). We read its sheet names and header rows with
+ * ExcelJS (which keeps every cell's colours, fonts, borders, column widths,
+ * merged cells, tab colours and any sheet we don't touch), map each column
+ * header to a discovery field via a synonym dictionary (English + Dutch), and
+ * write the data rows under the existing headers using the styling of the
+ * template's own data row — so the result looks exactly like the template.
  */
 
-type Accessor = (ctx: FillContext) => (string | number | boolean)[];
 type FieldGetter = (row: Record<string, unknown>) => string | number | boolean;
 
 interface FillContext {
@@ -20,14 +21,11 @@ interface FillContext {
   a: Assessment | null;
 }
 
-// A "dataset" = a list of records + a per-header value resolver.
 interface Dataset {
   id: string;
   label: string;
-  // synonyms that, when seen in a sheet's headers, hint this dataset
   hints: string[];
   rows: (ctx: FillContext) => Record<string, unknown>[];
-  // map a normalized header -> getter
   fields: { synonyms: string[]; get: FieldGetter }[];
 }
 
@@ -49,7 +47,7 @@ const DATASETS: Dataset[] = [
       { synonyms: ['licenses', 'license', 'licentie', 'licenties', 'sku', 'licentietype'], get: (r) => String(r.licenses ?? '') },
       { synonyms: ['created', 'createddatetime', 'aangemaakt', 'creatiedatum'], get: (r) => String(r.createdDateTime ?? '') },
       { synonyms: ['lastsignin', 'lastlogon', 'laatsteaanmelding', 'laatstelogin', 'lastlogin'], get: (r) => String(r.lastSignIn ?? '') },
-      { synonyms: ['mailboxsize', 'mailboxgrootte', 'grootte', 'sizegb', 'size'], get: () => '' },
+      { synonyms: ['mfa', 'mfastatus', 'multifactor'], get: (r) => String(r.mfa ?? '') },
     ],
   },
   {
@@ -85,6 +83,21 @@ const DATASETS: Dataset[] = [
       { synonyms: ['services', 'diensten', 'supportedservices'], get: (r) => String(r.supportedServices ?? '') },
     ],
   },
+  {
+    id: 'devices', label: 'Devices', hints: ['device', 'toestel', 'toestellen', 'apparaat', 'computer', 'endpoint', 'intune'],
+    rows: ({ d }) => (d.deviceInventory ?? []) as unknown as Record<string, unknown>[],
+    fields: [
+      { synonyms: ['devicename', 'name', 'naam', 'toestel', 'apparaat', 'hostname', 'computer'], get: (r) => String(r.deviceName ?? '') },
+      { synonyms: ['user', 'gebruiker', 'owner', 'eigenaar', 'primaryuser', 'upn'], get: (r) => String(r.user ?? '') },
+      { synonyms: ['os', 'operatingsystem', 'besturingssysteem', 'platform'], get: (r) => String(r.os ?? '') },
+      { synonyms: ['osversion', 'version', 'versie'], get: (r) => String(r.osVersion ?? '') },
+      { synonyms: ['compliance', 'compliancestate', 'compliant', 'conform', 'naleving'], get: (r) => String(r.compliance ?? '') },
+      { synonyms: ['ownership', 'owner', 'eigendom', 'beheer', 'managed'], get: (r) => String(r.ownership ?? '') },
+      { synonyms: ['manufacturer', 'fabrikant', 'merk', 'make'], get: (r) => String(r.manufacturer ?? '') },
+      { synonyms: ['model', 'type'], get: (r) => String(r.model ?? '') },
+      { synonyms: ['lastsync', 'laatstesync', 'lastcheckin', 'lastseen'], get: (r) => String(r.lastSync ?? '') },
+    ],
+  },
 ];
 
 export interface SheetPlan {
@@ -96,24 +109,45 @@ export interface SheetPlan {
 }
 
 export interface TemplateAnalysis {
-  workbook: XLSX.WorkBook;
+  workbook: ExcelJS.Workbook;
   sheets: SheetPlan[];
+}
+
+/** ExcelJS cell values can be rich text / formulas / dates — flatten to text. */
+function cellText(v: ExcelJS.CellValue): string {
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  if (typeof v === 'object') {
+    const o = v as unknown as Record<string, unknown>;
+    if (Array.isArray(o.richText)) return (o.richText as { text: string }[]).map((t) => t.text).join('');
+    if ('text' in o) return String(o.text ?? '');
+    if ('result' in o) return String(o.result ?? '');
+    if ('hyperlink' in o) return String(o.text ?? o.hyperlink ?? '');
+  }
+  return '';
 }
 
 /** Read an uploaded template file and detect each sheet's headers + best dataset. */
 export async function analyzeTemplate(file: File): Promise<TemplateAnalysis> {
-  const buf = await file.arrayBuffer();
-  const workbook = XLSX.read(buf, { cellStyles: true });
-  const sheets: SheetPlan[] = workbook.SheetNames.map((name) => {
-    const ws = workbook.Sheets[name];
-    const grid: unknown[][] = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false });
-    // Find the header row = the first row with >=2 non-empty text cells.
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(await file.arrayBuffer());
+
+  const sheets: SheetPlan[] = workbook.worksheets.map((ws) => {
+    const maxCols = Math.max(ws.columnCount, 1);
+    // Find the header row = the first row (within the first 10) with >=2 non-empty text cells.
     let headerRowIndex = 0;
-    for (let i = 0; i < Math.min(grid.length, 10); i++) {
-      const nonEmpty = (grid[i] ?? []).filter((c) => String(c ?? '').trim()).length;
-      if (nonEmpty >= 2) { headerRowIndex = i; break; }
+    let headers: string[] = [];
+    const scan = Math.min(ws.rowCount || 1, 10);
+    for (let i = 1; i <= scan; i++) {
+      const row = ws.getRow(i);
+      const vals: string[] = [];
+      for (let c = 1; c <= maxCols; c++) vals.push(cellText(row.getCell(c).value).trim());
+      if (vals.filter((v) => v).length >= 2) { headerRowIndex = i - 1; headers = vals; break; }
     }
-    const headers = (grid[headerRowIndex] ?? []).map((c) => String(c ?? '').trim());
+    // Trim trailing empty header cells.
+    while (headers.length && !headers[headers.length - 1]) headers.pop();
 
     // Auto-detect dataset: score by hint + field-synonym matches against headers.
     const normHeaders = headers.map(norm);
@@ -128,7 +162,7 @@ export async function analyzeTemplate(file: File): Promise<TemplateAnalysis> {
       if (!best || matched > best.matched) best = { id: ds.id, matched };
     }
     return {
-      sheetName: name, headers, headerRowIndex,
+      sheetName: ws.name, headers, headerRowIndex,
       datasetId: best && best.matched >= 1 ? best.id : null,
       matched: best ? Math.round(best.matched) : 0,
     };
@@ -136,13 +170,16 @@ export async function analyzeTemplate(file: File): Promise<TemplateAnalysis> {
   return { workbook, sheets };
 }
 
-/** Fill the analyzed template with discovery data and trigger a .xlsx download. */
-export function fillAndDownload(analysis: TemplateAnalysis, ctx: FillContext, filename: string): { sheet: string; rows: number }[] {
+/** Fill the analyzed template with discovery data and trigger a style-preserving .xlsx download. */
+export async function fillAndDownload(analysis: TemplateAnalysis, ctx: FillContext, filename: string): Promise<{ sheet: string; rows: number }[]> {
   const summary: { sheet: string; rows: number }[] = [];
+
   for (const plan of analysis.sheets) {
     if (!plan.datasetId) { summary.push({ sheet: plan.sheetName, rows: 0 }); continue; }
     const ds = DATASETS.find((x) => x.id === plan.datasetId);
     if (!ds) { summary.push({ sheet: plan.sheetName, rows: 0 }); continue; }
+    const ws = analysis.workbook.getWorksheet(plan.sheetName);
+    if (!ws) { summary.push({ sheet: plan.sheetName, rows: 0 }); continue; }
     const records = ds.rows(ctx);
 
     // Resolve a getter per template column header (unmatched columns stay blank).
@@ -152,26 +189,47 @@ export function fillAndDownload(analysis: TemplateAnalysis, ctx: FillContext, fi
       return f ? f.get : null;
     });
 
-    const ws = analysis.workbook.Sheets[plan.sheetName];
-    // Write data rows starting right after the header row, preserving the header.
-    const startRow = plan.headerRowIndex + 1;
-    records.forEach((rec, ri) => {
-      plan.headers.forEach((_h, ci) => {
-        const getter = getters[ci];
-        if (!getter) return;
-        const addr = XLSX.utils.encode_cell({ r: startRow + ri, c: ci });
-        const val = getter(rec);
-        ws[addr] = { t: typeof val === 'number' ? 'n' : 's', v: val };
-      });
+    // Capture the styling of the template's first data row (the row under the
+    // header) so EVERY written row looks like the template's table — colours,
+    // borders, number formats, fonts. Falls back to header style if absent.
+    const headerRowNum = plan.headerRowIndex + 1;     // 1-based
+    const firstDataRowNum = headerRowNum + 1;
+    const templateRow = ws.getRow(firstDataRowNum);
+    const headerRow = ws.getRow(headerRowNum);
+    const colStyles = plan.headers.map((_h, ci) => {
+      const tc = templateRow.getCell(ci + 1);
+      const src = tc && tc.style && Object.keys(tc.style).length ? tc.style : headerRow.getCell(ci + 1).style;
+      return src ? (JSON.parse(JSON.stringify(src)) as ExcelJS.Style) : null;
     });
-    // Extend the sheet range so the new rows are included.
-    const range = XLSX.utils.decode_range(ws['!ref'] ?? 'A1');
-    range.e.r = Math.max(range.e.r, startRow + records.length - 1);
-    range.e.c = Math.max(range.e.c, plan.headers.length - 1);
-    ws['!ref'] = XLSX.utils.encode_range(range);
+
+    records.forEach((rec, ri) => {
+      const row = ws.getRow(firstDataRowNum + ri);
+      plan.headers.forEach((_h, ci) => {
+        const cell = row.getCell(ci + 1);
+        const getter = getters[ci];
+        if (getter) {
+          const val = getter(rec);
+          cell.value = val as ExcelJS.CellValue;
+        }
+        if (colStyles[ci]) cell.style = colStyles[ci] as ExcelJS.Style;
+      });
+      row.commit();
+    });
+
     summary.push({ sheet: plan.sheetName, rows: records.length });
   }
-  XLSX.writeFile(analysis.workbook, filename.endsWith('.xlsx') ? filename : `${filename}.xlsx`);
+
+  const buf = await analysis.workbook.xlsx.writeBuffer();
+  const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename.endsWith('.xlsx') ? filename : `${filename}.xlsx`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+
   return summary;
 }
 

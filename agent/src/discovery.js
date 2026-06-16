@@ -129,13 +129,24 @@ export async function runReadOnlyDiscovery(token, log = () => {}) {
   const distributionGroups = groups.filter((g) => g.groupType === 'Distribution').length;
   log(`Get-MgGroup -> ${groups.length} groups (${m365Groups} M365, ${teams} Teams)`, 'ok');
 
-  let devices = { total: 0, byOs: {} };
+  let devices = { total: 0, byOs: {}, compliant: 0, nonCompliant: 0, byCompliance: {} };
+  let deviceInventory = [];
   try {
-    const dev = await gall(token, '/deviceManagement/managedDevices?$select=operatingSystem&$top=999', 10000);
-    const byOs = {};
-    for (const d of dev) { const os = d.operatingSystem || 'Unknown'; byOs[os] = (byOs[os] ?? 0) + 1; }
-    devices = { total: dev.length, byOs };
-    log(`Get-MgDeviceManagementManagedDevice -> ${dev.length}`, 'ok');
+    const dev = await gall(token, '/deviceManagement/managedDevices?$select=deviceName,operatingSystem,osVersion,complianceState,managedDeviceOwnerType,manufacturer,model,userPrincipalName,emailAddress,lastSyncDateTime,enrolledDateTime,serialNumber,managementAgent,isEncrypted&$top=999', 20000);
+    const byOs = {}; const byCompliance = {};
+    deviceInventory = dev.map((d) => {
+      const os = String(d.operatingSystem || 'Unknown'); byOs[os] = (byOs[os] ?? 0) + 1;
+      const comp = String(d.complianceState || 'unknown'); byCompliance[comp] = (byCompliance[comp] ?? 0) + 1;
+      return {
+        deviceName: d.deviceName ?? '', user: d.userPrincipalName ?? d.emailAddress ?? '', os, osVersion: d.osVersion ?? '',
+        compliance: comp, ownership: d.managedDeviceOwnerType ?? '', manufacturer: d.manufacturer ?? '', model: d.model ?? '',
+        serialNumber: d.serialNumber ?? '', managementAgent: d.managementAgent ?? '', encrypted: d.isEncrypted === true,
+        lastSync: String(d.lastSyncDateTime ?? '').slice(0, 10), enrolled: String(d.enrolledDateTime ?? '').slice(0, 10),
+      };
+    });
+    const compliant = byCompliance['compliant'] ?? 0;
+    devices = { total: dev.length, byOs, compliant, nonCompliant: dev.length - compliant, byCompliance };
+    log(`Get-MgDeviceManagementManagedDevice -> ${dev.length} (${compliant} compliant)`, 'ok');
   } catch (e) {
     validations.push({ workload: 'Intune (devices)', object: 'managedDevices', status: e.status || 0, note: String(e.message) });
   }
@@ -192,11 +203,12 @@ export async function runReadOnlyDiscovery(token, log = () => {}) {
   return {
     org: { displayName: org.displayName, tenantId: org.id, verifiedDomains: domains.filter((d) => d.isVerified).length },
     users, guests, disabled, groups, m365Groups, teams, securityGroups, distributionGroups,
-    licenses, domains, devices, usage,
+    licenses, domains, devices, deviceInventory, usage,
     sharePointSites, teamsDetail: [], siteDrives: [], sharing: { anonymous: 0, organization: 0, users: 0, total: 0, sampledDrives: 0 },
     oneDriveSample: { sampled: 0, readable: usage.oneDriveCount, notReadable: 0, usedGB: usage.oneDriveTotalGB },
     caPolicies, appRegistrations, servicePrincipals,
     intune: { configs: intuneConfigs.length, compliance: intuneCompliance.length, devices: devices.total },
+    compliancePolicies: intuneCompliance.map((p) => ({ name: p.displayName ?? '', platform: /android/i.test(String(p['@odata.type'] ?? '')) ? 'Android' : /ios/i.test(String(p['@odata.type'] ?? '')) ? 'iOS/iPadOS' : /macOS/i.test(String(p['@odata.type'] ?? '')) ? 'macOS' : /windows/i.test(String(p['@odata.type'] ?? '')) ? 'Windows' : 'Other' })),
     oneDrive: { readable: usage.oneDriveCount, notReadable: 0 },
     validations, workloads,
     fetchedAt: new Date().toISOString(),

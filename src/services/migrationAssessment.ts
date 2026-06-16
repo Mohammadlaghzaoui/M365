@@ -70,6 +70,8 @@ export function assess(d: DiscoveryResult): Assessment {
   if ((u.oneDriveOver100GB || 0) > 0) add('risk', 'OneDrive', `${u.oneDriveOver100GB} OneDrive(s) over 100 GB — long initial sync; pre-stage well before cutover.`);
   if (d.domains.length > 1) add('warn', 'Domains', `${d.domains.length} domains — a custom domain exists in only one tenant at a time; plan the domain cutover carefully.`);
   if (d.devices.total > 0) add('risk', 'Devices', `${d.devices.total} Intune-managed device(s) — enrollment cannot be moved; plan re-enrollment (some methods factory-reset). See Migration Edge Cases.`);
+  if ((d.devices.nonCompliant || 0) > 0) add('warn', 'Devices', `${d.devices.nonCompliant} device(s) are non-compliant/unknown — Conditional Access can block these accounts during and after cutover; remediate before migrating their users.`);
+  if ((d.compliancePolicies?.length || 0) > 0) add('info', 'Devices', `${d.compliancePolicies.length} compliance policy(ies) across ${[...new Set(d.compliancePolicies.map((p) => p.platform))].join(', ')} — recreate these in the target tenant before re-enrollment.`);
   const unverified = d.domains.filter((dom) => !dom.isVerified).length;
   if (unverified > 0) add('blocker', 'Domains', `${unverified} unverified domain(s) — resolve before any cutover.`);
   const noLocation = d.users.filter((x) => !x.usageLocation && x.accountEnabled).length;

@@ -182,6 +182,22 @@ export interface WorkloadReadiness {
   note: string;
 }
 
+export interface DeviceRecord {
+  deviceName: string;
+  user: string;
+  os: string;
+  osVersion: string;
+  compliance: string;
+  ownership: string;
+  manufacturer: string;
+  model: string;
+  serialNumber: string;
+  managementAgent: string;
+  encrypted: boolean;
+  lastSync: string;
+  enrolled: string;
+}
+
 export interface DiscoveryResult {
   org: { displayName: string; tenantId: string; verifiedDomains: number; tenantType?: string };
   users: DiscoveryUser[];
@@ -194,7 +210,8 @@ export interface DiscoveryResult {
   distributionGroups: number;
   licenses: DiscoveryLicense[];
   domains: DiscoveryDomain[];
-  devices: { total: number; byOs: Record<string, number> };
+  devices: { total: number; byOs: Record<string, number>; compliant: number; nonCompliant: number; byCompliance: Record<string, number> };
+  deviceInventory: DeviceRecord[];
   usage: UsageStats;
   // Extended assessment workloads
   sharePointSites: { id: string; name: string; webUrl: string; created: string; lastModified: string }[];
@@ -206,6 +223,7 @@ export interface DiscoveryResult {
   appRegistrations: { appId: string; displayName: string; signInAudience: string; created: string }[];
   servicePrincipals: { appId: string; displayName: string; type: string; enabled: boolean }[];
   intune: { configs: number; compliance: number; devices: number };
+  compliancePolicies: { name: string; platform: string }[];
   oneDrive: { readable: number; notReadable: number };
   validations: ValidationItem[];
   workloads: WorkloadReadiness[];
@@ -367,14 +385,39 @@ export async function runDiscovery(log: Logger = noop): Promise<DiscoveryResult>
   const distributionGroups = groups.filter((g) => g.groupType === 'Distribution').length;
   log(`→ ${groups.length} group(s): ${m365Groups} M365, ${teams} Teams, ${securityGroups} security, ${distributionGroups} distribution`, 'ok');
 
-  log('Get-MgDeviceManagementManagedDevice -All', 'cmd');
-  let devices = { total: 0, byOs: {} as Record<string, number> };
+  log('Get-MgDeviceManagementManagedDevice -All -Property deviceName,os,compliance,user,model …', 'cmd');
+  let devices = { total: 0, byOs: {} as Record<string, number>, compliant: 0, nonCompliant: 0, byCompliance: {} as Record<string, number> };
+  let deviceInventory: DeviceRecord[] = [];
   try {
-    const dev = await getAll<{ operatingSystem?: string }>('/deviceManagement/managedDevices?$select=operatingSystem&$top=999', 10000);
+    const dev = await getAll<Record<string, unknown>>('/deviceManagement/managedDevices?$select=deviceName,operatingSystem,osVersion,complianceState,managedDeviceOwnerType,manufacturer,model,userPrincipalName,emailAddress,lastSyncDateTime,enrolledDateTime,serialNumber,managementAgent,isEncrypted,azureADRegistered&$top=999', 20000);
     const byOs: Record<string, number> = {};
-    for (const d of dev) { const os = d.operatingSystem || 'Unknown'; byOs[os] = (byOs[os] ?? 0) + 1; }
-    devices = { total: dev.length, byOs };
+    const byCompliance: Record<string, number> = {};
+    deviceInventory = dev.map((d) => {
+      const os = String(d.operatingSystem || 'Unknown');
+      byOs[os] = (byOs[os] ?? 0) + 1;
+      const comp = String(d.complianceState || 'unknown');
+      byCompliance[comp] = (byCompliance[comp] ?? 0) + 1;
+      return {
+        deviceName: String(d.deviceName ?? ''),
+        user: String(d.userPrincipalName ?? d.emailAddress ?? ''),
+        os,
+        osVersion: String(d.osVersion ?? ''),
+        compliance: comp,
+        ownership: String(d.managedDeviceOwnerType ?? ''),
+        manufacturer: String(d.manufacturer ?? ''),
+        model: String(d.model ?? ''),
+        serialNumber: String(d.serialNumber ?? ''),
+        managementAgent: String(d.managementAgent ?? ''),
+        encrypted: d.isEncrypted === true,
+        lastSync: String(d.lastSyncDateTime ?? '').slice(0, 10),
+        enrolled: String(d.enrolledDateTime ?? '').slice(0, 10),
+      };
+    });
+    const compliant = byCompliance['compliant'] ?? 0;
+    const nonCompliant = dev.length - compliant;
+    devices = { total: dev.length, byOs, compliant, nonCompliant, byCompliance };
     log(`→ ${dev.length} managed device(s): ${Object.entries(byOs).map(([o, n]) => `${o} ${n}`).join(', ') || 'none'}`, 'ok');
+    log(`   compliance: ${compliant} compliant, ${nonCompliant} non-compliant/other`, 'info');
   } catch {
     log('→ device read skipped (no Intune scope/licence)', 'warn');
   }
@@ -427,8 +470,13 @@ export async function runDiscovery(log: Logger = noop): Promise<DiscoveryResult>
 
   const intuneConfigs = await collect('Intune (config)', 'Get-MgDeviceManagementDeviceConfiguration',
     () => getAll<unknown>('/deviceManagement/deviceConfigurations'), (n) => `${n} device configuration(s)`);
-  const intuneCompliance = await collect('Intune (compliance)', 'Get-MgDeviceManagementDeviceCompliancePolicy',
-    () => getAll<unknown>('/deviceManagement/deviceCompliancePolicies'), (n) => `${n} compliance policy(ies)`);
+  const intuneCompliance = await collect<Record<string, unknown>>('Intune (compliance)', 'Get-MgDeviceManagementDeviceCompliancePolicy',
+    () => getAll<Record<string, unknown>>('/deviceManagement/deviceCompliancePolicies'), (n) => `${n} compliance policy(ies)`);
+  const compliancePolicies = intuneCompliance.map((p) => {
+    const odataType = String(p['@odata.type'] ?? '');
+    const platform = /android/i.test(odataType) ? 'Android' : /ios/i.test(odataType) ? 'iOS/iPadOS' : /macOS/i.test(odataType) ? 'macOS' : /windows/i.test(odataType) ? 'Windows' : 'Other';
+    return { name: String(p.displayName ?? ''), platform };
+  });
 
   // ---- Per-object detail collectors via $batch (capped, 429-safe) ----
   const TEAM_CAP = 150, SITE_CAP = 150, OD_SAMPLE = 100;
@@ -548,10 +596,11 @@ export async function runDiscovery(log: Logger = noop): Promise<DiscoveryResult>
     org: { displayName: org.displayName, tenantId: org.id, verifiedDomains: domains.filter((d) => d.isVerified).length },
     users, guests, disabled,
     groups, m365Groups, teams, securityGroups, distributionGroups,
-    licenses, domains, devices, usage,
+    licenses, domains, devices, deviceInventory, usage,
     sharePointSites, teamsDetail, siteDrives, sharing, oneDriveSample,
     caPolicies, appRegistrations, servicePrincipals,
     intune: { configs: intuneConfigs.length, compliance: intuneCompliance.length, devices: devices.total },
+    compliancePolicies,
     oneDrive: { readable: oneDriveSample.readable || usage.oneDriveCount, notReadable: oneDriveSample.notReadable },
     validations, workloads,
     fetchedAt: new Date().toISOString(),
