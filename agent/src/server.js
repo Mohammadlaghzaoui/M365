@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import path from 'node:path';
 import fs from 'node:fs';
+import https from 'node:https';
 import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
 import { runPowerShell, psAvailable } from './powershell.js';
@@ -255,10 +256,31 @@ if (networked && !config.allowedOrigins.length) {
   console.warn('  [warn] Listening on the network with no ALLOWED_ORIGINS restriction — set it to your portal URL.');
 }
 
-app.listen(config.port, host, () => {
+// Optional HTTPS (SSL/TLS): set TLS_CERT_FILE + TLS_KEY_FILE (PEM). When present
+// the agent serves HTTPS directly — recommended for any networked deployment.
+let server = app;
+let scheme = 'http';
+if (process.env.TLS_CERT_FILE && process.env.TLS_KEY_FILE) {
+  try {
+    const opts = {
+      cert: fs.readFileSync(process.env.TLS_CERT_FILE),
+      key: fs.readFileSync(process.env.TLS_KEY_FILE),
+      ...(process.env.TLS_CA_FILE ? { ca: fs.readFileSync(process.env.TLS_CA_FILE) } : {}),
+    };
+    server = https.createServer(opts, app);
+    scheme = 'https';
+  } catch (e) {
+    console.error(`  [FATAL] Could not load TLS certificate/key: ${e.message}`);
+    process.exit(1);
+  }
+} else if (networked) {
+  console.warn('  [warn] Listening on the network over plain HTTP. Set TLS_CERT_FILE/TLS_KEY_FILE for SSL, or run behind an HTTPS reverse proxy.');
+}
+
+server.listen(config.port, host, () => {
   if (servesPortal) console.log(`\n  Portal UI served from ${publicDir}`);
-  console.log(`\n  WorkPilot Migration Agent listening on http://${host}:${config.port}`);
-  console.log(`  Host: ${config.hostname}  (bind: ${host})`);
+  console.log(`\n  WorkPilot Migration Agent listening on ${scheme}://${host}:${config.port}`);
+  console.log(`  Host: ${config.hostname}  (bind: ${host}, TLS: ${scheme === 'https' ? 'ON' : 'off'})`);
   console.log(`  Keys/roles: ${[...config.keys.values()].join(', ') || 'none'}`);
   console.log(`  PowerShell: ${config.declaredModules.join(', ') || '(detected at runtime)'}`);
   console.log(`  Graph app-auth: ${graphConfigured() ? 'configured' : 'NOT configured'}`);

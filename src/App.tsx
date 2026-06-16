@@ -8,6 +8,7 @@ import Migration from './pages/Migration';
 import MigrationConsole from './pages/MigrationConsole';
 import GpoAdvisor from './pages/GpoAdvisor';
 import GpoBuilder from './pages/GpoBuilder';
+import Discovery from './pages/Discovery';
 import Agent from './pages/Agent';
 import CrossTenant from './pages/CrossTenant';
 import Hybrid from './pages/Hybrid';
@@ -48,6 +49,7 @@ export default function App() {
           <Route path="/migration-console" element={<MigrationConsole />} />
           <Route path="/gpo-advisor" element={<GpoAdvisor />} />
           <Route path="/gpo-builder" element={<GpoBuilder />} />
+          <Route path="/discovery" element={<Discovery />} />
           <Route path="/agent" element={<Agent />} />
           <Route path="/edge-cases" element={<EdgeCasesAssistant />} />
           <Route path="/cross-tenant" element={<CrossTenant />} />
