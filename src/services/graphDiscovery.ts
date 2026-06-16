@@ -17,6 +17,7 @@ export const DISCOVERY_SCOPES = [
   'Domain.Read.All',
   'Reports.Read.All',
   'DeviceManagementManagedDevices.Read.All',
+  'Sites.Read.All',
 ];
 
 const V1 = 'https://graph.microsoft.com/v1.0';
@@ -85,6 +86,21 @@ export interface DiscoveryDomain {
   supportedServices: string;
 }
 
+export interface UsageStats {
+  mailboxCount: number;
+  mailboxTotalGB: number;
+  mailboxLargest: { upn: string; gb: number }[];
+  mailboxOver50GB: number;
+  archiveCount: number;
+  oneDriveCount: number;
+  oneDriveTotalGB: number;
+  oneDriveOver100GB: number;
+  spoSiteCount: number;
+  spoTotalGB: number;
+  available: boolean;
+  note?: string;
+}
+
 export interface DiscoveryResult {
   org: { displayName: string; tenantId: string; verifiedDomains: number };
   users: DiscoveryUser[];
@@ -98,7 +114,69 @@ export interface DiscoveryResult {
   licenses: DiscoveryLicense[];
   domains: DiscoveryDomain[];
   devices: { total: number; byOs: Record<string, number> };
+  usage: UsageStats;
   fetchedAt: string;
+}
+
+/** Fetch a Graph usage report (CSV) read-only and parse it into rows. */
+async function getReportCsv(path: string): Promise<Record<string, string>[]> {
+  const token = await getGraphToken(['Reports.Read.All']);
+  const res = await fetch(`${V1}${path}`, { headers: { authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new Error(`Graph ${res.status} on ${path}`);
+  const text = await res.text();
+  const lines = text.trim().split(/\r?\n/);
+  if (lines.length < 2) return [];
+  const headers = lines[0].split(',').map((h) => h.replace(/^﻿/, '').trim());
+  return lines.slice(1).map((line) => {
+    // Simple CSV split (report fields don't contain commas in the columns we use).
+    const cells = line.split(',');
+    const row: Record<string, string> = {};
+    headers.forEach((h, i) => { row[h] = (cells[i] ?? '').trim(); });
+    return row;
+  });
+}
+
+const toGB = (bytes: string | number) => Math.round((Number(bytes) || 0) / 1073741824 * 100) / 100;
+
+export async function runUsage(onProgress: (s: string) => void): Promise<UsageStats> {
+  const empty: UsageStats = { mailboxCount: 0, mailboxTotalGB: 0, mailboxLargest: [], mailboxOver50GB: 0, archiveCount: 0, oneDriveCount: 0, oneDriveTotalGB: 0, oneDriveOver100GB: 0, spoSiteCount: 0, spoTotalGB: 0, available: false };
+  try {
+    onProgress('Reading mailbox usage report (read-only) …');
+    const mbx = await getReportCsv("/reports/getMailboxUsageDetail(period='D30')?$format=text/csv");
+    const sizeKey = Object.keys(mbx[0] ?? {}).find((k) => /Storage Used/i.test(k)) ?? 'Storage Used (Byte)';
+    const upnKey = Object.keys(mbx[0] ?? {}).find((k) => /User Principal Name/i.test(k)) ?? 'User Principal Name';
+    const archiveKey = Object.keys(mbx[0] ?? {}).find((k) => /Has Archive/i.test(k));
+    const mailboxes = mbx.map((r) => ({ upn: r[upnKey] || '(hidden)', gb: toGB(r[sizeKey]), archive: archiveKey ? /true|yes/i.test(r[archiveKey]) : false }));
+    const mailboxTotalGB = Math.round(mailboxes.reduce((a, m) => a + m.gb, 0));
+    const largest = [...mailboxes].sort((a, b) => b.gb - a.gb).slice(0, 10).map((m) => ({ upn: m.upn, gb: m.gb }));
+
+    onProgress('Reading OneDrive usage report …');
+    const od = await getReportCsv("/reports/getOneDriveUsageAccountDetail(period='D30')?$format=text/csv");
+    const odSizeKey = Object.keys(od[0] ?? {}).find((k) => /Storage Used/i.test(k)) ?? 'Storage Used (Byte)';
+    const odSizes = od.map((r) => toGB(r[odSizeKey]));
+    const oneDriveTotalGB = Math.round(odSizes.reduce((a, b) => a + b, 0));
+
+    onProgress('Reading SharePoint site usage report …');
+    const spo = await getReportCsv("/reports/getSharePointSiteUsageDetail(period='D30')?$format=text/csv");
+    const spoSizeKey = Object.keys(spo[0] ?? {}).find((k) => /Storage Used/i.test(k)) ?? 'Storage Used (Byte)';
+    const spoTotalGB = Math.round(spo.reduce((a, r) => a + toGB(r[spoSizeKey]), 0));
+
+    return {
+      mailboxCount: mailboxes.length,
+      mailboxTotalGB,
+      mailboxLargest: largest,
+      mailboxOver50GB: mailboxes.filter((m) => m.gb > 50).length,
+      archiveCount: mailboxes.filter((m) => m.archive).length,
+      oneDriveCount: od.length,
+      oneDriveTotalGB,
+      oneDriveOver100GB: odSizes.filter((g) => g > 100).length,
+      spoSiteCount: spo.length,
+      spoTotalGB,
+      available: true,
+    };
+  } catch (e) {
+    return { ...empty, note: `Usage reports unavailable: ${e instanceof Error ? e.message : e}. Needs Reports.Read.All; check tenant concealment setting.` };
+  }
 }
 
 function skuName(skuId: string, skus: { skuId: string; skuPartNumber: string }[]): string {
@@ -175,11 +253,13 @@ export async function runDiscovery(onProgress: (step: string) => void): Promise<
     onProgress('Device read skipped (no Intune scope/licence).');
   }
 
+  const usage = await runUsage(onProgress);
+
   return {
     org: { displayName: org.displayName, tenantId: org.id, verifiedDomains: domains.filter((d) => d.isVerified).length },
     users, guests, disabled,
     groups, m365Groups, teams, securityGroups, distributionGroups,
-    licenses, domains, devices,
+    licenses, domains, devices, usage,
     fetchedAt: new Date().toISOString(),
   };
 }

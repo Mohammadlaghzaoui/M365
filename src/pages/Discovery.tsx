@@ -1,8 +1,9 @@
-import { useState } from 'react';
-import { Radar, ShieldCheck, Loader2, FileSpreadsheet, RefreshCw, Building2, Users2, KeyRound, Boxes, Globe, MonitorSmartphone, Sparkles } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Radar, ShieldCheck, Loader2, FileSpreadsheet, RefreshCw, Building2, Users2, Boxes, Globe, MonitorSmartphone, Sparkles, Gauge, AlertTriangle, ListChecks, HardDrive } from 'lucide-react';
 import { Badge, Button, Card, PageHeader, ProgressBar, Section } from '../components/ui';
 import { DonutChart, HBarChart } from '../components/charts';
 import { runDiscovery, DiscoveryResult, DISCOVERY_SCOPES } from '../services/graphDiscovery';
+import { assess } from '../services/migrationAssessment';
 import { downloadWorkbook, Sheet } from '../services/excelExport';
 import { currentAccount } from '../services/sso';
 import { getSSOSettings, aiEnabled } from '../store/settings';
@@ -18,6 +19,7 @@ export default function Discovery() {
   const [ai, setAi] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
   const ssoReady = getSSOSettings().enabled && !!getSSOSettings().clientId;
+  const analysis = useMemo(() => (result ? assess(result) : null), [result]);
 
   const run = async () => {
     setBusy(true); setError(''); setAi('');
@@ -82,6 +84,35 @@ export default function Discovery() {
         columns: ['Operating system', 'Count'],
         rows: Object.entries(result.devices.byOs).map(([os, n]) => [os, n]),
       },
+      {
+        name: 'Data sizing',
+        columns: ['Workload', 'Total GB', 'Count', 'Notes'],
+        rows: [
+          ['Mailboxes', result.usage.mailboxTotalGB, result.usage.mailboxCount, `${result.usage.mailboxOver50GB} over 50GB, ${result.usage.archiveCount} archives`],
+          ['OneDrive', result.usage.oneDriveTotalGB, result.usage.oneDriveCount, `${result.usage.oneDriveOver100GB} over 100GB`],
+          ['SharePoint', result.usage.spoTotalGB, result.usage.spoSiteCount, ''],
+        ],
+      },
+      {
+        name: 'Largest mailboxes',
+        columns: ['User', 'Size (GB)'],
+        rows: result.usage.mailboxLargest.map((m) => [m.upn, m.gb]),
+      },
+      ...(analysis ? [{
+        name: 'Migration analysis',
+        columns: ['Category', 'Detail'],
+        rows: [
+          ['Complexity', `${analysis.complexityLabel} (${analysis.complexityScore}/100)`],
+          ['Total data', `~${analysis.totalDataGB} GB`],
+          ['Estimated window', `~${analysis.estimatedDays} working days`],
+          ['Recommended approach', analysis.recommendedApproach],
+          ...analysis.findings.map((f) => [f.level.toUpperCase() + ' · ' + f.area, f.text] as (string | number)[]),
+        ],
+      }, {
+        name: 'Prep checklist',
+        columns: ['Phase', 'Task'],
+        rows: analysis.checklist.map((c) => [c.phase, c.task]),
+      }] : []),
     ];
     downloadWorkbook(sheets, `migration-discovery-${result.org.displayName.replace(/[^a-z0-9]+/gi, '-')}-${new Date().toISOString().slice(0, 10)}`);
   };
@@ -134,7 +165,7 @@ export default function Discovery() {
               { icon: Building2, label: 'Tenant', value: result.org.displayName, sub: `${result.org.verifiedDomains} verified domains`, color: 'text-blue-600 dark:text-blue-400' },
               { icon: Users2, label: 'Users', value: result.users.length, sub: `${result.guests} guests · ${result.disabled} disabled`, color: 'text-violet-600 dark:text-violet-400' },
               { icon: Boxes, label: 'Groups / Teams', value: result.groups.length, sub: `${result.m365Groups} M365 · ${result.teams} Teams`, color: 'text-emerald-600 dark:text-emerald-400' },
-              { icon: MonitorSmartphone, label: 'Devices', value: result.devices.total, sub: 'Intune managed', color: 'text-amber-600 dark:text-amber-400' },
+              { icon: HardDrive, label: 'Total data', value: result.usage.available ? `${(((result.usage.mailboxTotalGB + result.usage.oneDriveTotalGB + result.usage.spoTotalGB) / 1024)).toFixed(1)} TB` : 'n/a', sub: `${result.devices.total} devices`, color: 'text-amber-600 dark:text-amber-400' },
             ].map((k) => (
               <Card key={k.label} className="p-4">
                 <div className="flex items-center gap-2 text-xs font-semibold uppercase text-slate-400"><k.icon size={14} /> {k.label}</div>
@@ -159,6 +190,68 @@ export default function Discovery() {
               <HBarChart data={licenseChart} />
             </Card>
           </div>
+
+          {/* ===== MIGRATION ANALYSIS ===== */}
+          {analysis && (
+            <>
+              <div className="grid gap-5 lg:grid-cols-[320px_1fr]">
+                <Card className="p-5">
+                  <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 flex items-center gap-2"><Gauge size={15} /> Migration complexity</h3>
+                  <DonutChart centerLabel={analysis.complexityLabel} centerValue={`${analysis.complexityScore}`}
+                    segments={[
+                      { label: 'Complexity', value: analysis.complexityScore, color: analysis.complexityScore >= 75 ? '#dc2626' : analysis.complexityScore >= 50 ? '#f59e0b' : analysis.complexityScore >= 25 ? '#2563eb' : '#10b981' },
+                      { label: 'Headroom', value: 100 - analysis.complexityScore, color: '#e2e8f0' },
+                    ]} />
+                  <div className="mt-3 space-y-1 text-sm">
+                    <div className="flex justify-between"><span className="text-slate-400">Total data</span><span className="font-semibold text-slate-700 dark:text-slate-200">~{analysis.totalDataGB.toLocaleString()} GB</span></div>
+                    <div className="flex justify-between"><span className="text-slate-400">Est. window</span><span className="font-semibold text-slate-700 dark:text-slate-200">~{analysis.estimatedDays} days</span></div>
+                  </div>
+                </Card>
+                <Card className="p-5">
+                  <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 flex items-center gap-2"><HardDrive size={15} /> Sizing & recommended approach</h3>
+                  <div className="grid gap-x-6 gap-y-1.5 sm:grid-cols-2">
+                    {analysis.sizing.map((s) => (
+                      <div key={s.label} className="flex justify-between gap-3 text-sm">
+                        <span className="text-slate-400">{s.label}</span>
+                        <span className="text-right font-medium text-slate-700 dark:text-slate-200">{s.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-4 rounded-lg bg-blue-50 dark:bg-blue-900/20 p-3 text-sm text-slate-700 dark:text-slate-200">
+                    <span className="font-semibold text-blue-700 dark:text-blue-300">Recommended: </span>{analysis.recommendedApproach}
+                  </div>
+                </Card>
+              </div>
+
+              <Card className="p-5">
+                <Section title={`Findings & risks (${analysis.findings.length})`}>
+                  <div className="space-y-2">
+                    {analysis.findings.map((f, i) => (
+                      <div key={i} className="flex items-start gap-2.5 text-sm">
+                        <Badge color={f.level === 'blocker' ? 'red' : f.level === 'risk' ? 'orange' : f.level === 'warn' ? 'purple' : 'blue'}>{f.level}</Badge>
+                        <span className="font-medium text-slate-600 dark:text-slate-300 shrink-0">{f.area}</span>
+                        <span className="text-slate-700 dark:text-slate-200">{f.text}</span>
+                      </div>
+                    ))}
+                  </div>
+                </Section>
+              </Card>
+
+              <Card className="p-5">
+                <Section title="Migration preparation checklist">
+                  <div className="space-y-1.5">
+                    {analysis.checklist.map((c, i) => (
+                      <div key={i} className="flex items-start gap-2.5 text-sm">
+                        <ListChecks size={15} className="mt-0.5 shrink-0 text-blue-500" />
+                        <span className="w-28 shrink-0 text-xs font-bold uppercase text-slate-400">{c.phase}</span>
+                        <span className="text-slate-700 dark:text-slate-200">{c.task}</span>
+                      </div>
+                    ))}
+                  </div>
+                </Section>
+              </Card>
+            </>
+          )}
 
           {ai && (
             <Card className="p-5 border-violet-200 dark:border-violet-800">
