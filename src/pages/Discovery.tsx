@@ -4,6 +4,8 @@ import { Badge, Button, Card, PageHeader, Section } from '../components/ui';
 import { DonutChart, HBarChart } from '../components/charts';
 import { runDiscovery, DiscoveryResult, DISCOVERY_SCOPES, LogLevel, useDiscoveryToken } from '../services/graphDiscovery';
 import { connectTenant, connectedTenant, disconnectTenant, getDiscoveryToken, discoveryAuthConfigured } from '../services/discoveryAuth';
+import { saveTenantResult, loadTenantResult, tenantIndex, removeTenantResult, recordExportAudit } from '../services/tenantStore';
+import { getSession } from '../services/auth';
 import { assess } from '../services/migrationAssessment';
 import { downloadWorkbook, Sheet } from '../services/excelExport';
 import { currentAccount } from '../services/sso';
@@ -25,6 +27,7 @@ export default function Discovery() {
   const [ai, setAi] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
   const analysis = useMemo(() => (result ? assess(result) : null), [result]);
+  const [tenants, setTenants] = useState(() => tenantIndex());
   const [connected, setConnected] = useState<{ username: string; tenantId: string } | null>(() => connectedTenant());
   const [connecting, setConnecting] = useState(false);
   const authReady = discoveryAuthConfigured();
@@ -93,6 +96,8 @@ export default function Discovery() {
       addLine(`Discovery complete — ${r.users.length} users, ${r.groups.length} groups, ~${Math.round((r.usage.mailboxTotalGB + r.usage.oneDriveTotalGB + r.usage.spoTotalGB))} GB data. READ-ONLY: nothing was written.`, 'ok');
       setResult(r);
       save('discovery-result', r);
+      saveTenantResult(r); // per-tenant separated storage
+      setTenants(tenantIndex());
     } catch (e) {
       addLine(`ERROR: ${e instanceof Error ? e.message : e}`, 'err');
       setError(e instanceof Error ? e.message : String(e));
@@ -148,6 +153,36 @@ export default function Discovery() {
         rows: Object.entries(result.devices.byOs).map(([os, n]) => [os, n]),
       },
       {
+        name: 'SharePoint sites',
+        columns: ['Name', 'URL', 'Created', 'Last modified'],
+        rows: result.sharePointSites.map((s) => [s.name, s.webUrl, s.created, s.lastModified]),
+      },
+      {
+        name: 'Conditional Access',
+        columns: ['Policy', 'State'],
+        rows: result.caPolicies.map((p) => [p.displayName, p.state]),
+      },
+      {
+        name: 'App registrations',
+        columns: ['Display name', 'App ID', 'Audience', 'Created'],
+        rows: result.appRegistrations.map((a) => [a.displayName, a.appId, a.signInAudience, a.created]),
+      },
+      {
+        name: 'Enterprise apps',
+        columns: ['Display name', 'App ID', 'Type', 'Enabled'],
+        rows: result.servicePrincipals.map((s) => [s.displayName, s.appId, s.type, s.enabled ? 'Yes' : 'No']),
+      },
+      {
+        name: 'Workload readiness',
+        columns: ['Workload', 'Status', 'Count', 'Note'],
+        rows: result.workloads.map((w) => [w.workload, w.status, w.count, w.note]),
+      },
+      {
+        name: 'Validation items',
+        columns: ['Workload', 'Status', 'Note'],
+        rows: result.validations.map((v) => [v.workload, v.status, v.note]),
+      },
+      {
         name: 'Data sizing',
         columns: ['Workload', 'Total GB', 'Count', 'Notes'],
         rows: [
@@ -178,6 +213,7 @@ export default function Discovery() {
       }] : []),
     ];
     downloadWorkbook(sheets, `migration-discovery-${result.org.displayName.replace(/[^a-z0-9]+/gi, '-')}-${new Date().toISOString().slice(0, 10)}`);
+    recordExportAudit({ operator: getSession()?.email ?? 'local', tenantId: result.org.tenantId, tenantName: result.org.displayName, scopes: DISCOVERY_SCOPES.length, objects: result.users.length + result.groups.length + result.sharePointSites.length, format: 'xlsx' });
   };
 
   const analyze = async () => {
@@ -306,8 +342,36 @@ export default function Discovery() {
         </Card>
       )}
 
+      {/* Per-tenant stored assessments */}
+      {tenants.length > 0 && (
+        <Card className="mb-5 p-4">
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Stored tenant assessments (separated per tenant)</div>
+          <div className="flex flex-wrap gap-2">
+            {tenants.map((t) => (
+              <span key={t.tenantId} className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs ${result?.org.tenantId === t.tenantId ? 'border-blue-400 bg-blue-50 dark:bg-blue-900/20' : 'border-slate-200 dark:border-slate-700'}`}>
+                <button onClick={() => { const r = loadTenantResult(t.tenantId); if (r) { setResult(r); save('discovery-result', r); } }} className="font-medium text-slate-700 dark:text-slate-200 hover:text-blue-500">
+                  {t.displayName}
+                </button>
+                <span className="text-slate-400">{t.users}u · {new Date(t.fetchedAt).toLocaleDateString()}</span>
+                <button onClick={() => { removeTenantResult(t.tenantId); setTenants(tenantIndex()); }} className="text-slate-400 hover:text-red-500">×</button>
+              </span>
+            ))}
+          </div>
+        </Card>
+      )}
+
       {result && (
         <div className="space-y-5">
+          {/* Active tenant banner */}
+          <Card className="p-4 border-blue-200 dark:border-blue-800">
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <Building2 size={16} className="text-blue-500" />
+              <span className="font-semibold text-slate-800 dark:text-slate-100">{result.org.displayName}</span>
+              <span className="text-xs text-slate-400">tenant {result.org.tenantId}</span>
+              <Badge color="green">Read-only assessment · no tenant changes performed</Badge>
+            </div>
+          </Card>
+
           {/* KPI strip */}
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             {[
@@ -401,6 +465,59 @@ export default function Discovery() {
               </Card>
             </>
           )}
+
+          {/* Workload readiness + validation */}
+          <div className="grid gap-5 lg:grid-cols-2">
+            <Card className="p-5">
+              <Section title="Migration readiness by workload">
+                <div className="space-y-1.5">
+                  {result.workloads.map((w) => (
+                    <div key={w.workload} className="flex items-center gap-2.5 text-sm">
+                      <Badge color={w.status === 'Exported' ? 'green' : w.status === 'Partial' ? 'orange' : w.status === 'Blocked' ? 'red' : 'purple'}>{w.status}</Badge>
+                      <span className="font-medium text-slate-700 dark:text-slate-200 w-32 shrink-0">{w.workload}</span>
+                      <span className="text-slate-500 dark:text-slate-400">{w.note}</span>
+                    </div>
+                  ))}
+                </div>
+              </Section>
+            </Card>
+            <Card className="p-5">
+              <Section title={`Validation items (${result.validations.length})`}>
+                {result.validations.length === 0 ? (
+                  <p className="text-sm text-emerald-600">No blocked/forbidden endpoints — full read access.</p>
+                ) : (
+                  <div className="space-y-1.5 max-h-64 overflow-y-auto">
+                    {result.validations.map((v, i) => (
+                      <div key={i} className="text-sm">
+                        <Badge color={v.status === 403 || v.status === 401 ? 'red' : 'orange'}>{v.status || 'err'}</Badge>
+                        <span className="ml-2 font-medium text-slate-700 dark:text-slate-200">{v.workload}</span>
+                        <div className="text-xs text-slate-400">{v.note}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Section>
+            </Card>
+          </div>
+
+          {/* Extended workloads summary */}
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+            {[
+              { label: 'SharePoint sites', value: result.sharePointSites.length },
+              { label: 'Conditional Access', value: result.caPolicies.length },
+              { label: 'App registrations', value: result.appRegistrations.length },
+              { label: 'Enterprise apps', value: result.servicePrincipals.length },
+              { label: 'Intune configs', value: result.intune.configs },
+              { label: 'Compliance policies', value: result.intune.compliance },
+              { label: 'Managed devices', value: result.intune.devices },
+              { label: 'OneDrive readable', value: result.oneDrive.readable },
+            ].map((k) => (
+              <Card key={k.label} className="p-4">
+                <div className="text-xs font-semibold uppercase text-slate-400">{k.label}</div>
+                <div className="mt-1 text-2xl font-bold text-blue-600 dark:text-blue-400">{k.value}</div>
+              </Card>
+            ))}
+          </div>
 
           {ai && (
             <Card className="p-5 border-violet-200 dark:border-violet-800">

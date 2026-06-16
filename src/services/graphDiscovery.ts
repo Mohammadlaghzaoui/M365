@@ -26,8 +26,15 @@ export const DISCOVERY_SCOPES = [
   'Organization.Read.All',
   'Domain.Read.All',
   'Reports.Read.All',
-  'DeviceManagementManagedDevices.Read.All',
   'Sites.Read.All',
+  'Files.Read.All',
+  'Team.ReadBasic.All',
+  'Channel.ReadBasic.All',
+  'TeamMember.Read.All',
+  'Application.Read.All',
+  'Policy.Read.All',
+  'DeviceManagementConfiguration.Read.All',
+  'DeviceManagementManagedDevices.Read.All',
 ];
 
 const V1 = 'https://graph.microsoft.com/v1.0';
@@ -36,25 +43,42 @@ export type LogLevel = 'cmd' | 'info' | 'ok' | 'warn' | 'err';
 export type Logger = (text: string, level?: LogLevel) => void;
 const noop: Logger = () => {};
 
+/** GraphError carries the status so callers can turn 403/404 into validation items. */
+export class GraphError extends Error {
+  constructor(public status: number, message: string) { super(message); }
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Fetch with automatic 429 (rate limit) retry honouring Retry-After. */
+async function graphFetch(full: string, token: string, tries = 4): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(full, { headers: { authorization: `Bearer ${token}`, ConsistencyLevel: 'eventual' } });
+    if (res.status === 429 && attempt < tries) {
+      const wait = Number(res.headers.get('Retry-After')) || Math.min(30, 2 ** attempt);
+      await sleep(wait * 1000);
+      continue;
+    }
+    return res;
+  }
+}
+
 async function get<T = unknown>(path: string, scopes = DISCOVERY_SCOPES): Promise<T> {
   const token = await tokenProvider(scopes);
-  const res = await fetch(`${V1}${path}`, {
-    method: 'GET',
-    headers: { authorization: `Bearer ${token}`, ConsistencyLevel: 'eventual' },
-  });
-  if (!res.ok) throw new Error(`Graph ${res.status} on ${path}: ${(await res.text()).slice(0, 200)}`);
+  const res = await graphFetch(path.startsWith('http') ? path : `${V1}${path}`, token);
+  if (!res.ok) throw new GraphError(res.status, `Graph ${res.status} on ${path}: ${(await res.text()).slice(0, 200)}`);
   return res.json() as Promise<T>;
 }
 
-/** Page through a collection (read-only), capped to keep it browser-friendly. */
+/** Page through a collection (read-only), capped, with 429 + nextLink handling. */
 async function getAll<T = Record<string, unknown>>(path: string, cap = 5000): Promise<T[]> {
   const out: T[] = [];
   let url: string | null = path;
   const token = await tokenProvider(DISCOVERY_SCOPES);
   while (url && out.length < cap) {
     const full: string = url.startsWith('http') ? url : `${V1}${url}`;
-    const res = await fetch(full, { headers: { authorization: `Bearer ${token}`, ConsistencyLevel: 'eventual' } });
-    if (!res.ok) throw new Error(`Graph ${res.status} on ${url}: ${(await res.text()).slice(0, 200)}`);
+    const res = await graphFetch(full, token);
+    if (!res.ok) throw new GraphError(res.status, `Graph ${res.status} on ${url}: ${(await res.text()).slice(0, 200)}`);
     const data = await res.json();
     out.push(...(data.value ?? []));
     url = data['@odata.nextLink'] ?? null;
@@ -115,8 +139,24 @@ export interface UsageStats {
   note?: string;
 }
 
+export type WorkloadStatus = 'Exported' | 'Partial' | 'Blocked' | 'Needs validation' | 'Not run';
+
+export interface ValidationItem {
+  workload: string;
+  object: string;
+  status: number;
+  note: string;
+}
+
+export interface WorkloadReadiness {
+  workload: string;
+  status: WorkloadStatus;
+  count: number;
+  note: string;
+}
+
 export interface DiscoveryResult {
-  org: { displayName: string; tenantId: string; verifiedDomains: number };
+  org: { displayName: string; tenantId: string; verifiedDomains: number; tenantType?: string };
   users: DiscoveryUser[];
   guests: number;
   disabled: number;
@@ -129,6 +169,15 @@ export interface DiscoveryResult {
   domains: DiscoveryDomain[];
   devices: { total: number; byOs: Record<string, number> };
   usage: UsageStats;
+  // Extended assessment workloads
+  sharePointSites: { id: string; name: string; webUrl: string; created: string; lastModified: string }[];
+  caPolicies: { id: string; displayName: string; state: string }[];
+  appRegistrations: { appId: string; displayName: string; signInAudience: string; created: string }[];
+  servicePrincipals: { appId: string; displayName: string; type: string; enabled: boolean }[];
+  intune: { configs: number; compliance: number; devices: number };
+  oneDrive: { readable: number; notReadable: number };
+  validations: ValidationItem[];
+  workloads: WorkloadReadiness[];
   fetchedAt: string;
 }
 
@@ -285,11 +334,72 @@ export async function runDiscovery(log: Logger = noop): Promise<DiscoveryResult>
 
   const usage = await runUsage(log);
 
+  // ---- Extended workloads (each resilient: 403/404 → validation item) ----
+  const validations: ValidationItem[] = [];
+  const workloads: WorkloadReadiness[] = [];
+  const collect = async <T>(workload: string, cmd: string, fn: () => Promise<T[]>, okNote: (n: number) => string): Promise<T[]> => {
+    log(cmd, 'cmd');
+    try {
+      const items = await fn();
+      log(`→ ${okNote(items.length)}`, 'ok');
+      workloads.push({ workload, status: 'Exported', count: items.length, note: okNote(items.length) });
+      return items;
+    } catch (e) {
+      const status = e instanceof GraphError ? e.status : 0;
+      const blocked = status === 403 || status === 401;
+      log(`→ ${workload}: ${blocked ? 'blocked' : 'needs validation'} (${status || 'error'})`, 'warn');
+      validations.push({ workload, object: cmd, status, note: e instanceof Error ? e.message : String(e) });
+      workloads.push({ workload, status: blocked ? 'Blocked' : 'Needs validation', count: 0, note: blocked ? 'Insufficient permission/consent for this read scope.' : 'Endpoint not available or out of scope.' });
+      return [];
+    }
+  };
+
+  const sites = await collect('SharePoint', 'Get-MgSite -Search *',
+    () => getAll<Record<string, unknown>>('/sites?search=*&$top=200', 2000),
+    (n) => `${n} SharePoint site(s)`);
+  const sharePointSites = sites.map((s) => ({
+    id: String(s.id ?? ''), name: String(s.displayName ?? s.name ?? ''), webUrl: String(s.webUrl ?? ''),
+    created: String(s.createdDateTime ?? '').slice(0, 10), lastModified: String(s.lastModifiedDateTime ?? '').slice(0, 10),
+  }));
+
+  const caRaw = await collect('Identity (CA)', 'Get-MgIdentityConditionalAccessPolicy',
+    () => getAll<Record<string, unknown>>('/identity/conditionalAccess/policies'),
+    (n) => `${n} Conditional Access policy(ies)`);
+  const caPolicies = caRaw.map((p) => ({ id: String(p.id ?? ''), displayName: String(p.displayName ?? ''), state: String(p.state ?? '') }));
+
+  const appsRaw = await collect('Apps', 'Get-MgApplication',
+    () => getAll<Record<string, unknown>>('/applications?$select=appId,displayName,signInAudience,createdDateTime&$top=999'),
+    (n) => `${n} app registration(s)`);
+  const appRegistrations = appsRaw.map((a) => ({ appId: String(a.appId ?? ''), displayName: String(a.displayName ?? ''), signInAudience: String(a.signInAudience ?? ''), created: String(a.createdDateTime ?? '').slice(0, 10) }));
+
+  const spRaw = await collect('Enterprise apps', 'Get-MgServicePrincipal',
+    () => getAll<Record<string, unknown>>('/servicePrincipals?$select=appId,displayName,servicePrincipalType,accountEnabled&$top=999'),
+    (n) => `${n} service principal(s)`);
+  const servicePrincipals = spRaw.map((s) => ({ appId: String(s.appId ?? ''), displayName: String(s.displayName ?? ''), type: String(s.servicePrincipalType ?? ''), enabled: s.accountEnabled !== false }));
+
+  const intuneConfigs = await collect('Intune (config)', 'Get-MgDeviceManagementDeviceConfiguration',
+    () => getAll<unknown>('/deviceManagement/deviceConfigurations'), (n) => `${n} device configuration(s)`);
+  const intuneCompliance = await collect('Intune (compliance)', 'Get-MgDeviceManagementDeviceCompliancePolicy',
+    () => getAll<unknown>('/deviceManagement/deviceCompliancePolicies'), (n) => `${n} compliance policy(ies)`);
+
+  // ---- Workload readiness summary ----
+  workloads.unshift({ workload: 'Identity', status: 'Exported', count: users.length, note: `${users.length} users, ${guests} guests` });
+  workloads.push({ workload: 'Teams', status: teams > 0 ? 'Exported' : 'Needs validation', count: teams, note: `${teams} Teams` });
+  workloads.push({ workload: 'OneDrive', status: usage.available ? 'Exported' : 'Needs validation', count: usage.oneDriveCount, note: usage.available ? `${usage.oneDriveCount} accounts sized` : 'OneDrive sizes need Reports.Read.All' });
+  workloads.push({ workload: 'Exchange', status: 'Needs validation', count: usage.mailboxCount, note: 'Deep Exchange (permissions, rules, connectors) requires Exchange Online PowerShell — Graph baseline only.' });
+  workloads.push({ workload: 'Power Platform', status: 'Needs validation', count: 0, note: 'Power Platform inventory not covered by Graph — separate connector planned.' });
+
+  log(`Assessment complete: ${validations.length} validation item(s) logged.`, validations.length ? 'warn' : 'ok');
+
   return {
     org: { displayName: org.displayName, tenantId: org.id, verifiedDomains: domains.filter((d) => d.isVerified).length },
     users, guests, disabled,
     groups, m365Groups, teams, securityGroups, distributionGroups,
     licenses, domains, devices, usage,
+    sharePointSites, caPolicies, appRegistrations, servicePrincipals,
+    intune: { configs: intuneConfigs.length, compliance: intuneCompliance.length, devices: devices.total },
+    oneDrive: { readable: usage.oneDriveCount, notReadable: 0 },
+    validations, workloads,
     fetchedAt: new Date().toISOString(),
   };
 }
