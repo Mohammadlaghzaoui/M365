@@ -173,6 +173,16 @@ export default function Discovery() {
         rows: result.servicePrincipals.map((s) => [s.displayName, s.appId, s.type, s.enabled ? 'Yes' : 'No']),
       },
       {
+        name: 'Teams detail',
+        columns: ['Team', 'Visibility', 'Owners', 'Members', 'Guests', 'Channels', 'Private/shared channels'],
+        rows: result.teamsDetail.map((t) => [t.name, t.visibility, t.owners, t.members, t.guests, t.channels, t.privateChannels]),
+      },
+      {
+        name: 'Site drives',
+        columns: ['Site', 'Drive', 'Type', 'Used GB', 'Total GB'],
+        rows: result.siteDrives.map((d) => [d.siteName, d.driveName, d.driveType, d.usedGB, d.totalGB]),
+      },
+      {
         name: 'Workload readiness',
         columns: ['Workload', 'Status', 'Count', 'Note'],
         rows: result.workloads.map((w) => [w.workload, w.status, w.count, w.note]),
@@ -499,6 +509,47 @@ export default function Discovery() {
               </Section>
             </Card>
           </div>
+
+          {/* Teams detail + SharePoint sharing baseline */}
+          {(result.teamsDetail.length > 0 || result.sharing.sampledDrives > 0) && (
+            <div className="grid gap-5 lg:grid-cols-2">
+              {result.teamsDetail.length > 0 && (
+                <Card className="p-5">
+                  <Section title={`Teams detail (${result.teamsDetail.length})`}>
+                    <div className="overflow-x-auto max-h-72 overflow-y-auto">
+                      <table className="w-full text-sm">
+                        <thead><tr className="border-b border-slate-200 dark:border-slate-700 text-left text-xs uppercase text-slate-400"><th className="py-1.5 pr-2">Team</th><th className="py-1.5 pr-2">Own.</th><th className="py-1.5 pr-2">Mem.</th><th className="py-1.5 pr-2">Guests</th><th className="py-1.5 pr-2">Chan.</th><th className="py-1.5">Priv.</th></tr></thead>
+                        <tbody>
+                          {result.teamsDetail.map((t, i) => (
+                            <tr key={i} className="border-b border-slate-100 dark:border-slate-700/50">
+                              <td className="py-1.5 pr-2 font-medium text-slate-700 dark:text-slate-200">{t.name}</td>
+                              <td className="py-1.5 pr-2 text-slate-500">{t.owners}</td>
+                              <td className="py-1.5 pr-2 text-slate-500">{t.members}</td>
+                              <td className="py-1.5 pr-2">{t.guests > 0 ? <Badge color="orange">{t.guests}</Badge> : <span className="text-slate-400">0</span>}</td>
+                              <td className="py-1.5 pr-2 text-slate-500">{t.channels}</td>
+                              <td className="py-1.5 text-slate-500">{t.privateChannels}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Section>
+                </Card>
+              )}
+              {result.sharing.sampledDrives > 0 && (
+                <Card className="p-5">
+                  <Section title="SharePoint sharing baseline (sampled)">
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 text-sm"><Badge color="red">Anonymous</Badge><span className="font-semibold text-slate-700 dark:text-slate-200">{result.sharing.anonymous}</span><span className="text-slate-400">"Anyone" links</span></div>
+                      <div className="flex items-center gap-2 text-sm"><Badge color="orange">Organization</Badge><span className="font-semibold text-slate-700 dark:text-slate-200">{result.sharing.organization}</span><span className="text-slate-400">company-wide links</span></div>
+                      <div className="flex items-center gap-2 text-sm"><Badge color="blue">Specific users</Badge><span className="font-semibold text-slate-700 dark:text-slate-200">{result.sharing.users}</span></div>
+                      <p className="mt-2 text-xs text-slate-400">Across {result.sharing.sampledDrives} sampled drive(s), {result.sharing.total} permission(s) total. OneDrive sample: {result.oneDriveSample.readable}/{result.oneDriveSample.sampled} readable.</p>
+                    </div>
+                  </Section>
+                </Card>
+              )}
+            </div>
+          )}
 
           {/* Extended workloads summary */}
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">

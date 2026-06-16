@@ -63,6 +63,32 @@ async function graphFetch(full: string, token: string, tries = 4): Promise<Respo
   }
 }
 
+interface BatchReq { id: string; url: string }
+interface BatchResp { id: string; status: number; body: unknown }
+
+/** Graph $batch — up to 20 GET requests per call, 429-aware. Read-only. */
+async function graphBatch(requests: BatchReq[]): Promise<Map<string, BatchResp>> {
+  const token = await tokenProvider(DISCOVERY_SCOPES);
+  const out = new Map<string, BatchResp>();
+  for (let i = 0; i < requests.length; i += 20) {
+    const chunk = requests.slice(i, i + 20);
+    const body = { requests: chunk.map((r) => ({ id: r.id, method: 'GET', url: r.url })) };
+    let res: Response;
+    for (let attempt = 0; ; attempt++) {
+      res = await fetch(`${V1}/$batch`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      if (res.status === 429 && attempt < 4) { await sleep((Number(res.headers.get('Retry-After')) || 2 ** attempt) * 1000); continue; }
+      break;
+    }
+    if (!res.ok) throw new GraphError(res.status, `Graph $batch ${res.status}`);
+    const data = await res.json();
+    for (const r of data.responses ?? []) out.set(r.id, { id: r.id, status: r.status, body: r.body });
+    // inner 429s inside a batch: honor the largest Retry-After then continue
+    const throttled = (data.responses ?? []).some((r: BatchResp) => r.status === 429);
+    if (throttled) await sleep(3000);
+  }
+  return out;
+}
+
 async function get<T = unknown>(path: string, scopes = DISCOVERY_SCOPES): Promise<T> {
   const token = await tokenProvider(scopes);
   const res = await graphFetch(path.startsWith('http') ? path : `${V1}${path}`, token);
@@ -171,6 +197,10 @@ export interface DiscoveryResult {
   usage: UsageStats;
   // Extended assessment workloads
   sharePointSites: { id: string; name: string; webUrl: string; created: string; lastModified: string }[];
+  teamsDetail: { name: string; visibility: string; owners: number; members: number; guests: number; channels: number; privateChannels: number }[];
+  siteDrives: { siteName: string; driveName: string; driveType: string; usedGB: number; totalGB: number }[];
+  sharing: { anonymous: number; organization: number; users: number; total: number; sampledDrives: number };
+  oneDriveSample: { sampled: number; readable: number; notReadable: number; usedGB: number };
   caPolicies: { id: string; displayName: string; state: string }[];
   appRegistrations: { appId: string; displayName: string; signInAudience: string; created: string }[];
   servicePrincipals: { appId: string; displayName: string; type: string; enabled: boolean }[];
@@ -382,6 +412,111 @@ export async function runDiscovery(log: Logger = noop): Promise<DiscoveryResult>
   const intuneCompliance = await collect('Intune (compliance)', 'Get-MgDeviceManagementDeviceCompliancePolicy',
     () => getAll<unknown>('/deviceManagement/deviceCompliancePolicies'), (n) => `${n} compliance policy(ies)`);
 
+  // ---- Per-object detail collectors via $batch (capped, 429-safe) ----
+  const TEAM_CAP = 150, SITE_CAP = 150, OD_SAMPLE = 100;
+  const gb = (b: unknown) => Math.round((Number(b) || 0) / 1073741824 * 100) / 100;
+
+  // Teams detail (channels, owners, members, guests) for Teams-enabled groups.
+  const teamsDetail: DiscoveryResult['teamsDetail'] = [];
+  try {
+    const teamGroups = rawGroups.filter((g) => ((g.resourceProvisioningOptions as string[]) ?? []).includes('Team')).slice(0, TEAM_CAP) as Record<string, unknown>[];
+    if (teamGroups.length) {
+      log(`Get-MgTeamChannel / owners / members for ${teamGroups.length} team(s) (batched) ...`, 'cmd');
+      const reqs: BatchReq[] = [];
+      teamGroups.forEach((g, i) => {
+        reqs.push({ id: `c${i}`, url: `/teams/${g.id}/channels?$select=membershipType` });
+        reqs.push({ id: `o${i}`, url: `/groups/${g.id}/owners/$count` });
+        reqs.push({ id: `m${i}`, url: `/groups/${g.id}/members?$select=userType&$top=999` });
+      });
+      const resp = await graphBatch(reqs);
+      teamGroups.forEach((g, i) => {
+        const ch = resp.get(`c${i}`)?.body as { value?: { membershipType?: string }[] } | undefined;
+        const channels = ch?.value ?? [];
+        const mem = resp.get(`m${i}`)?.body as { value?: { userType?: string }[] } | undefined;
+        const members = mem?.value ?? [];
+        const ownersBody = resp.get(`o${i}`)?.body;
+        teamsDetail.push({
+          name: String(g.displayName ?? ''),
+          visibility: String(g.visibility ?? ''),
+          owners: typeof ownersBody === 'number' ? ownersBody : Number(ownersBody) || 0,
+          members: members.length,
+          guests: members.filter((m) => m.userType === 'Guest').length,
+          channels: channels.length,
+          privateChannels: channels.filter((c) => c.membershipType === 'private' || c.membershipType === 'shared').length,
+        });
+      });
+      log(`→ detailed ${teamsDetail.length} team(s)`, 'ok');
+    }
+  } catch (e) {
+    validations.push({ workload: 'Teams detail', object: 'channels/owners/members', status: e instanceof GraphError ? e.status : 0, note: e instanceof Error ? e.message : String(e) });
+  }
+
+  // SharePoint drives + sharing baseline for sampled sites.
+  const siteDrives: DiscoveryResult['siteDrives'] = [];
+  const sharing = { anonymous: 0, organization: 0, users: 0, total: 0, sampledDrives: 0 };
+  try {
+    const sampleSites = sharePointSites.slice(0, SITE_CAP);
+    if (sampleSites.length) {
+      log(`Get-MgSiteDrive for ${sampleSites.length} site(s) (batched) ...`, 'cmd');
+      const driveResp = await graphBatch(sampleSites.map((s, i) => ({ id: `d${i}`, url: `/sites/${s.id}/drives?$select=name,driveType,quota,id` })));
+      const driveIds: { id: string; siteName: string; driveName: string }[] = [];
+      sampleSites.forEach((s, i) => {
+        const body = driveResp.get(`d${i}`)?.body as { value?: Record<string, unknown>[] } | undefined;
+        for (const dr of body?.value ?? []) {
+          const quota = (dr.quota as { used?: number; total?: number }) ?? {};
+          siteDrives.push({ siteName: s.name, driveName: String(dr.name ?? ''), driveType: String(dr.driveType ?? ''), usedGB: gb(quota.used), totalGB: gb(quota.total) });
+          if (dr.id) driveIds.push({ id: String(dr.id), siteName: s.name, driveName: String(dr.name ?? '') });
+        }
+      });
+      // Sharing baseline: root permissions for a sample of drives.
+      const permSample = driveIds.slice(0, 100);
+      if (permSample.length) {
+        log(`Get-MgDriveRootPermission for ${permSample.length} drive(s) (sharing baseline) ...`, 'cmd');
+        const permResp = await graphBatch(permSample.map((d, i) => ({ id: `p${i}`, url: `/drives/${d.id}/root/permissions` })));
+        permSample.forEach((_d, i) => {
+          const body = permResp.get(`p${i}`)?.body as { value?: { link?: { scope?: string }; grantedToV2?: unknown }[] } | undefined;
+          for (const perm of body?.value ?? []) {
+            sharing.total++;
+            const scope = perm.link?.scope;
+            if (scope === 'anonymous') sharing.anonymous++;
+            else if (scope === 'organization') sharing.organization++;
+            else if (perm.grantedToV2) sharing.users++;
+          }
+          sharing.sampledDrives++;
+        });
+        log(`→ sharing: ${sharing.anonymous} anonymous, ${sharing.organization} org, ${sharing.users} user link(s) across ${sharing.sampledDrives} drive(s)`, 'ok');
+      }
+    }
+  } catch (e) {
+    validations.push({ workload: 'SharePoint drives/sharing', object: 'drives/permissions', status: e instanceof GraphError ? e.status : 0, note: e instanceof Error ? e.message : String(e) });
+  }
+
+  // OneDrive per user (sampled) — 403/404 = not readable, not a hard error.
+  const oneDriveSample = { sampled: 0, readable: 0, notReadable: 0, usedGB: 0 };
+  try {
+    const sample = users.filter((u) => u.accountEnabled && u.userType !== 'Guest').slice(0, OD_SAMPLE);
+    const idUsers = (rawUsers as Record<string, unknown>[]).filter((u) => sample.some((s) => s.userPrincipalName === u.userPrincipalName)).slice(0, OD_SAMPLE);
+    if (idUsers.length) {
+      log(`Get-MgUserDefaultDrive for ${idUsers.length} user(s) sample (OneDrive readability) ...`, 'cmd');
+      const odResp = await graphBatch(idUsers.map((u, i) => ({ id: `u${i}`, url: `/users/${u.id}/drive?$select=quota` })));
+      idUsers.forEach((_u, i) => {
+        const r = odResp.get(`u${i}`);
+        oneDriveSample.sampled++;
+        if (r && r.status >= 200 && r.status < 300) {
+          oneDriveSample.readable++;
+          const q = (r.body as { quota?: { used?: number } })?.quota;
+          oneDriveSample.usedGB += gb(q?.used);
+        } else {
+          oneDriveSample.notReadable++;
+        }
+      });
+      oneDriveSample.usedGB = Math.round(oneDriveSample.usedGB);
+      log(`→ OneDrive sample: ${oneDriveSample.readable} readable, ${oneDriveSample.notReadable} not readable (of ${oneDriveSample.sampled})`, 'ok');
+    }
+  } catch (e) {
+    validations.push({ workload: 'OneDrive', object: 'user drive', status: e instanceof GraphError ? e.status : 0, note: e instanceof Error ? e.message : String(e) });
+  }
+
   // ---- Workload readiness summary ----
   workloads.unshift({ workload: 'Identity', status: 'Exported', count: users.length, note: `${users.length} users, ${guests} guests` });
   workloads.push({ workload: 'Teams', status: teams > 0 ? 'Exported' : 'Needs validation', count: teams, note: `${teams} Teams` });
@@ -396,9 +531,10 @@ export async function runDiscovery(log: Logger = noop): Promise<DiscoveryResult>
     users, guests, disabled,
     groups, m365Groups, teams, securityGroups, distributionGroups,
     licenses, domains, devices, usage,
-    sharePointSites, caPolicies, appRegistrations, servicePrincipals,
+    sharePointSites, teamsDetail, siteDrives, sharing, oneDriveSample,
+    caPolicies, appRegistrations, servicePrincipals,
     intune: { configs: intuneConfigs.length, compliance: intuneCompliance.length, devices: devices.total },
-    oneDrive: { readable: usage.oneDriveCount, notReadable: 0 },
+    oneDrive: { readable: oneDriveSample.readable || usage.oneDriveCount, notReadable: oneDriveSample.notReadable },
     validations, workloads,
     fetchedAt: new Date().toISOString(),
   };
