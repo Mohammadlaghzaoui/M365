@@ -10,6 +10,7 @@ import { graphRequest, graphConfigured } from './graph.js';
 import { jobs, createJob, runJob } from './jobs.js';
 import { getBatchStatus, exoConfigured } from './exchange.js';
 import { audit, readAudit } from './audit.js';
+import { startDeviceDiscovery, sessions, publicSession } from './deviceAuth.js';
 
 const app = express();
 app.disable('x-powered-by');
@@ -49,13 +50,14 @@ if (servesPortal) {
   app.use(express.static(publicDir));
 }
 
-const API_PREFIXES = ['/health', '/endpoints', '/provision', '/migrate', '/powershell', '/jobs', '/audit'];
+const API_PREFIXES = ['/health', '/endpoints', '/provision', '/migrate', '/powershell', '/jobs', '/audit', '/discovery'];
 const isApi = (p) => API_PREFIXES.some((x) => p === x || p.startsWith(x + '/'));
 
 // ---- API key auth + RBAC (every API route except /health) ----
 // Role is resolved from the KEY server-side — a tampered browser cannot escalate.
 const ROLE_RANK = { read_only: 0, engineer: 1, architect: 2, super_admin: 3 };
 const minRoleFor = (method, p) => {
+  if (p.startsWith('/discovery')) return 'read_only';             // read-only assessment, lowest bar
   if (method === 'GET') return 'read_only';                       // health, jobs, audit gated below
   if (p.startsWith('/powershell')) return 'super_admin';          // raw PS = highest bar
   if (p === '/migrate/start' || p.startsWith('/provision')) return 'engineer'; // real changes
@@ -119,6 +121,24 @@ app.get('/health', async (_req, res) => {
     },
     time: new Date().toISOString(),
   });
+});
+
+// ---- Zero-setup tenant analysis: device code flow + read-only discovery ----
+app.post('/discovery/start', async (req, res) => {
+  try {
+    const { session, codeReady } = startDeviceDiscovery();
+    await codeReady; // resolves as soon as the device code is available
+    audit({ actor: req.actor, role: req.agentRole, method: 'POST', path: '/discovery/start', result: 'allowed', operator: req.header('x-operator') ?? '', ip: req.ip });
+    res.json(publicSession(session));
+  } catch (e) {
+    res.status(500).json({ error: String(e.message ?? e) });
+  }
+});
+
+app.get('/discovery/status/:id', (req, res) => {
+  const s = sessions.get(req.params.id);
+  if (!s) return res.status(404).json({ error: 'Session not found or expired.' });
+  res.json(publicSession(s));
 });
 
 // ---- Verify an endpoint / connectivity ----
