@@ -5,7 +5,7 @@ import { DonutChart, HBarChart } from '../components/charts';
 import { runDiscovery, DiscoveryResult, DISCOVERY_SCOPES, LogLevel, useDiscoveryToken } from '../services/graphDiscovery';
 import { connectTenant, connectedTenant, disconnectTenant, getDiscoveryToken, discoveryAuthConfigured, getDiscoveryAuth, saveDiscoveryAuth } from '../services/discoveryAuth';
 import { saveTenantResult, loadTenantResult, tenantIndex, removeTenantResult, recordExportAudit } from '../services/tenantStore';
-import { cloudAgentConfigured, startDeviceDiscovery, trackDeviceDiscovery, DeviceSession } from '../services/cloudDiscovery';
+import { cloudAgentConfigured } from '../services/cloudDiscovery';
 import { requestDeviceCode, pollForToken, getOnecomToken, clearOnecomToken, DeviceCode } from '../services/onecomDeviceAuth';
 import { getSession } from '../services/auth';
 import { assess } from '../services/migrationAssessment';
@@ -61,33 +61,6 @@ export default function Discovery() {
       addLine(`ERROR: ${e instanceof Error ? e.message : e}`, 'err');
     } finally {
       setBusy(false); setCodePhase('idle'); setCode(null); clearOnecomToken();
-    }
-  };
-
-  // ----- Zero-setup device-code flow via the cloud agent (fallback) -----
-  const [device, setDevice] = useState<DeviceSession | null>(null);
-
-  const easyConnect = async () => {
-    setError(''); setLines([]); setDevice(null);
-    try {
-      const s = await startDeviceDiscovery();
-      setDevice(s);
-      setBusy(true);
-      addLine('Device code issued. Sign in at the link with the customer admin to start the read-only analysis.', 'info');
-      const done = await trackDeviceDiscovery(s.id, (text, level) => addLine(text, level));
-      setDevice(done);
-      if (done.phase === 'done' && done.result) {
-        setResult(done.result);
-        save('discovery-result', done.result);
-        saveTenantResult(done.result);
-        setTenants(tenantIndex());
-      } else if (done.error) {
-        setError(done.error);
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
     }
   };
 
@@ -375,36 +348,6 @@ export default function Discovery() {
           )}
         </Section>
       </Card>
-
-      {/* Alternative: zero setup via a cloud agent — just enter a code */}
-      {cloudReady && (
-        <Card className="mb-5 p-5 border-emerald-300 dark:border-emerald-700">
-          <Section title="Easy connect — no setup, just a code">
-            <p className="mb-3 text-sm text-slate-600 dark:text-slate-300">
-              No app to create, nothing to install. Click below, then sign in once with the customer's admin using the code. The analysis is <strong>read-only</strong>.
-            </p>
-            {!device ? (
-              <Button onClick={easyConnect} disabled={busy}>
-                {busy ? <Loader2 size={16} className="animate-spin" /> : <Building2 size={16} />} Connect a tenant with a code
-              </Button>
-            ) : device.phase === 'awaiting-auth' || device.phase === 'starting' ? (
-              <div className="rounded-xl border-2 border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/20 p-4">
-                <div className="text-sm text-slate-600 dark:text-slate-300">1. Open this link:</div>
-                <a href={device.verificationUri} target="_blank" rel="noreferrer" className="text-lg font-semibold text-blue-600 hover:underline">{device.verificationUri || 'https://microsoft.com/devicelogin'}</a>
-                <div className="mt-3 text-sm text-slate-600 dark:text-slate-300">2. Enter this code:</div>
-                <div className="flex items-center gap-3">
-                  <span className="rounded-lg bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 px-4 py-2 font-mono text-2xl font-bold tracking-widest text-slate-800 dark:text-slate-100">{device.userCode}</span>
-                  <CopyButton text={device.userCode} label="Copy code" />
-                </div>
-                <div className="mt-3 text-sm text-slate-600 dark:text-slate-300">3. Sign in as the customer's admin and approve. The analysis starts automatically.</div>
-                <div className="mt-2 flex items-center gap-2 text-xs text-emerald-700 dark:text-emerald-300"><Loader2 size={13} className="animate-spin" /> Waiting for sign-in…</div>
-              </div>
-            ) : device.phase === 'collecting' ? (
-              <div className="flex items-center gap-2 text-sm text-blue-600"><Loader2 size={15} className="animate-spin" /> Signed in as {device.username} — collecting read-only data…</div>
-            ) : null}
-          </Section>
-        </Card>
-      )}
 
       {/* Connect the customer tenant — interactive popup login, no tenant ID */}
       <Card className="mb-5 p-5 border-blue-200 dark:border-blue-800">
