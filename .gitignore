@@ -6,3 +6,5 @@ dist
 agent/audit.log
 agent/.env
 agent/public
+
+onecom-upload.zip

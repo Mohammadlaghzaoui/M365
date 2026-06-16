@@ -6,7 +6,7 @@ import { runDiscovery, DiscoveryResult, DISCOVERY_SCOPES, LogLevel, useDiscovery
 import { connectTenant, connectedTenant, disconnectTenant, getDiscoveryToken, discoveryAuthConfigured, getDiscoveryAuth, saveDiscoveryAuth } from '../services/discoveryAuth';
 import { saveTenantResult, loadTenantResult, tenantIndex, removeTenantResult, recordExportAudit } from '../services/tenantStore';
 import { cloudAgentConfigured, startDeviceDiscovery, trackDeviceDiscovery, DeviceSession } from '../services/cloudDiscovery';
-import { requestDeviceCode, pollForToken, getBrowserDeviceToken, clearBrowserDeviceToken, DeviceCode } from '../services/browserDeviceAuth';
+import { requestDeviceCode, pollForToken, getOnecomToken, clearOnecomToken, DeviceCode } from '../services/onecomDeviceAuth';
 import { getSession } from '../services/auth';
 import { assess } from '../services/migrationAssessment';
 import { downloadWorkbook, Sheet } from '../services/excelExport';
@@ -35,7 +35,7 @@ export default function Discovery() {
   const authReady = discoveryAuthConfigured();
   const cloudReady = cloudAgentConfigured();
 
-  // ----- Browser-only zero-setup device-code flow (no agent, no app reg) -----
+  // ----- Zero-setup device-code flow via the one.com PHP broker (no agent, no app reg) -----
   const [code, setCode] = useState<DeviceCode | null>(null);
   const [codePhase, setCodePhase] = useState<'idle' | 'awaiting' | 'collecting'>('idle');
 
@@ -49,7 +49,7 @@ export default function Discovery() {
       setCodePhase('collecting');
       setBusy(true);
       addLine(`Signed in (tenant ${tenantId}). Starting read-only analysis ...`, 'ok');
-      useDiscoveryToken(getBrowserDeviceToken);
+      useDiscoveryToken(getOnecomToken);
       const r = await runDiscovery(addLine);
       addLine('Read-only assessment complete. No tenant changes were made.', 'ok');
       setResult(r);
@@ -60,7 +60,7 @@ export default function Discovery() {
       setError(e instanceof Error ? e.message : String(e));
       addLine(`ERROR: ${e instanceof Error ? e.message : e}`, 'err');
     } finally {
-      setBusy(false); setCodePhase('idle'); setCode(null); clearBrowserDeviceToken();
+      setBusy(false); setCodePhase('idle'); setCode(null); clearOnecomToken();
     }
   };
 
@@ -312,7 +312,36 @@ export default function Discovery() {
         </div>
       </Card>
 
-      {/* Easiest path: zero setup via the cloud agent — just enter a code */}
+      {/* Primary path: enter a code — brokered by the one.com PHP helper (no agent, no app reg) */}
+      <Card className="mb-5 p-5 border-emerald-300 dark:border-emerald-700">
+        <Section title="Connect a tenant — just enter a code">
+          <p className="mb-3 text-sm text-slate-600 dark:text-slate-300">
+            No app registration, no tenant ID, nothing installed. Click below, sign in once with the customer's admin
+            using the code, and approve the Microsoft Graph consent. The analysis is <strong>read-only</strong>.
+          </p>
+          {codePhase === 'idle' ? (
+            <Button onClick={codeConnect} disabled={busy}>
+              {busy ? <Loader2 size={16} className="animate-spin" /> : <Building2 size={16} />} Connect a tenant with a code
+            </Button>
+          ) : codePhase === 'awaiting' && code ? (
+            <div className="rounded-xl border-2 border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/20 p-4">
+              <div className="text-sm text-slate-600 dark:text-slate-300">1. Open this link:</div>
+              <a href={code.verification_uri} target="_blank" rel="noreferrer" className="text-lg font-semibold text-blue-600 hover:underline">{code.verification_uri || 'https://microsoft.com/devicelogin'}</a>
+              <div className="mt-3 text-sm text-slate-600 dark:text-slate-300">2. Enter this code:</div>
+              <div className="flex items-center gap-3">
+                <span className="rounded-lg bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 px-4 py-2 font-mono text-2xl font-bold tracking-widest text-slate-800 dark:text-slate-100">{code.user_code}</span>
+                <CopyButton text={code.user_code} label="Copy code" />
+              </div>
+              <div className="mt-3 text-sm text-slate-600 dark:text-slate-300">3. Sign in as the customer's admin and approve. The read-only analysis starts automatically.</div>
+              <div className="mt-2 flex items-center gap-2 text-xs text-emerald-700 dark:text-emerald-300"><Loader2 size={13} className="animate-spin" /> Waiting for sign-in…</div>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-sm text-blue-600"><Loader2 size={15} className="animate-spin" /> Signed in — collecting read-only data…</div>
+          )}
+        </Section>
+      </Card>
+
+      {/* Alternative: zero setup via a cloud agent — just enter a code */}
       {cloudReady && (
         <Card className="mb-5 p-5 border-emerald-300 dark:border-emerald-700">
           <Section title="Easy connect — no setup, just a code">
