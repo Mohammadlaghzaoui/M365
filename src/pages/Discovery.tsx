@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Radar, ShieldCheck, Loader2, FileSpreadsheet, RefreshCw, Building2, Users2, Boxes, Globe, Sparkles, Gauge, ListChecks, HardDrive } from 'lucide-react';
-import { Badge, Button, Card, PageHeader, Section } from '../components/ui';
+import { Badge, Button, Card, CopyButton, PageHeader, Section } from '../components/ui';
 import { DonutChart, HBarChart } from '../components/charts';
 import { runDiscovery, DiscoveryResult, DISCOVERY_SCOPES, LogLevel, useDiscoveryToken } from '../services/graphDiscovery';
-import { connectTenant, connectedTenant, disconnectTenant, getDiscoveryToken, discoveryAuthConfigured } from '../services/discoveryAuth';
+import { connectTenant, connectedTenant, disconnectTenant, getDiscoveryToken, discoveryAuthConfigured, getDiscoveryAuth, saveDiscoveryAuth } from '../services/discoveryAuth';
 import { saveTenantResult, loadTenantResult, tenantIndex, removeTenantResult, recordExportAudit } from '../services/tenantStore';
 import { getSession } from '../services/auth';
 import { assess } from '../services/migrationAssessment';
@@ -256,10 +256,9 @@ export default function Discovery() {
       {/* Connect the customer tenant — interactive popup login, no tenant ID */}
       <Card className="mb-5 p-5 border-blue-200 dark:border-blue-800">
         <Section title="Connect the customer tenant to analyze">
-          <p className="mb-3 text-sm text-slate-500 dark:text-slate-400">
-            Sign in <strong>interactively</strong> with the customer tenant's admin credentials — a Microsoft popup opens, you log in (and approve the MFA code) for <em>that</em> tenant. No tenant ID needed; the same portal works for every migration. Read-only consent only.
-          </p>
-          {connected ? (
+          {!authReady ? (
+            <SetupWizard onDone={() => { setError(''); }} />
+          ) : connected ? (
             <div className="flex flex-wrap items-center gap-3">
               <Badge color="green">Connected</Badge>
               <span className="text-sm font-medium text-slate-700 dark:text-slate-200">{connected.username}</span>
@@ -267,12 +266,16 @@ export default function Discovery() {
               <Button variant="secondary" onClick={disconnect}>Disconnect / switch tenant</Button>
             </div>
           ) : (
-            <div className="flex flex-wrap items-center gap-3">
-              <Button onClick={connect} disabled={connecting || !authReady}>
-                {connecting ? <Loader2 size={16} className="animate-spin" /> : <Building2 size={16} />} Connect customer tenant (sign in)
-              </Button>
-              {!authReady && <span className="text-sm text-amber-600 dark:text-amber-400">Configure the multi-tenant app once in <Link to="/settings" className="font-semibold hover:underline">Settings → Sign-in → Migration Discovery connection</Link>.</span>}
-            </div>
+            <>
+              <p className="mb-3 text-sm text-slate-500 dark:text-slate-400">
+                Sign in with the customer's admin account — a Microsoft popup opens. No tenant ID needed. The analysis is <strong>read-only</strong>; nothing in the tenant is changed.
+              </p>
+              <div className="flex flex-wrap items-center gap-3">
+                <Button onClick={connect} disabled={connecting}>
+                  {connecting ? <Loader2 size={16} className="animate-spin" /> : <Building2 size={16} />} Connect customer tenant (sign in)
+                </Button>
+              </div>
+            </>
           )}
         </Section>
       </Card>
@@ -616,6 +619,67 @@ export default function Discovery() {
           <p className="text-xs text-slate-400">Read-only snapshot · {new Date(result.fetchedAt).toLocaleString()} · {result.users.length} users / {result.groups.length} groups loaded. Export to Excel for the full per-row data.</p>
         </div>
       )}
+    </div>
+  );
+}
+
+/** First-time, in-portal setup made simple: 3 steps, big buttons, copy fields. */
+function SetupWizard({ onDone }: { onDone: () => void }) {
+  const [clientId, setClientId] = useState(getDiscoveryAuth().clientId);
+  const redirectUri = window.location.origin + window.location.pathname;
+  const scopes = DISCOVERY_SCOPES.join(' ');
+  const appRegUrl = 'https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/CreateApplicationBlade/quickStartType~/null/isMSAApp~/false';
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-slate-600 dark:text-slate-300">
+        One-time setup (≈3 minutes). After this you just click <strong>Connect</strong> and sign in for every tenant — no tenant ID, no technical steps. The analysis is always <strong>read-only</strong>.
+      </p>
+
+      {/* Step 1 */}
+      <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-4">
+        <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-100">
+          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-blue-600 text-xs font-bold text-white">1</span>
+          Open Microsoft and create the connection (once)
+        </div>
+        <a href={appRegUrl} target="_blank" rel="noreferrer">
+          <Button><Building2 size={15} /> Open Microsoft app registration</Button>
+        </a>
+        <ul className="mt-3 space-y-2 text-sm text-slate-600 dark:text-slate-300">
+          <li>• <strong>Name:</strong> WorkPilot Discovery</li>
+          <li>• <strong>Supported account types:</strong> choose <em>"Accounts in any organizational directory (multitenant)"</em></li>
+          <li className="flex flex-wrap items-center gap-2">• <strong>Redirect URI</strong> (platform "Single-page application"), paste this:
+            <code className="rounded bg-slate-100 dark:bg-slate-700 px-1.5 py-0.5 text-xs">{redirectUri}</code>
+            <CopyButton text={redirectUri} />
+          </li>
+          <li className="flex flex-wrap items-center gap-2">• Under <strong>API permissions</strong> → Microsoft Graph → Delegated, add these (paste the list):
+            <CopyButton text={scopes} label="Copy permissions" />
+          </li>
+        </ul>
+      </div>
+
+      {/* Step 2 */}
+      <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-4">
+        <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-100">
+          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-blue-600 text-xs font-bold text-white">2</span>
+          Copy the Application (client) ID and paste it here
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            value={clientId}
+            onChange={(e) => setClientId(e.target.value.trim())}
+            placeholder="00000000-0000-0000-0000-000000000000"
+            className="min-w-80 flex-1 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-800 dark:text-slate-100 focus:border-blue-500 focus:outline-none"
+          />
+          <Button onClick={() => { saveDiscoveryAuth({ clientId }); onDone(); }} disabled={!/^[0-9a-f-]{30,}$/i.test(clientId)}>Save</Button>
+        </div>
+      </div>
+
+      {/* Step 3 */}
+      <div className="rounded-xl border border-dashed border-slate-300 dark:border-slate-600 p-4 text-sm text-slate-500 dark:text-slate-400">
+        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-400 text-xs font-bold text-white">3</span>
+        <span className="ml-2">After saving, the green <strong>Connect customer tenant</strong> button appears. Click it, sign in with the customer's admin, approve once — done. You never touch this setup again.</span>
+      </div>
     </div>
   );
 }
