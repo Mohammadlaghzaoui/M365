@@ -9,6 +9,7 @@ import { currentAccount } from '../services/sso';
 import { getSSOSettings, aiEnabled } from '../store/settings';
 import { load, save } from '../store/useLocalStorage';
 import { chat } from '../services/ai';
+import { analyzeTemplate, fillAndDownload, TemplateAnalysis, TEMPLATE_DATASETS } from '../services/templateFill';
 import { Link } from 'react-router-dom';
 
 export default function Discovery() {
@@ -24,6 +25,33 @@ export default function Discovery() {
   const [aiBusy, setAiBusy] = useState(false);
   const ssoReady = getSSOSettings().enabled && !!getSSOSettings().clientId;
   const analysis = useMemo(() => (result ? assess(result) : null), [result]);
+
+  // ----- Template-aware export (uses the engineer's own Excel template) -----
+  const [tpl, setTpl] = useState<TemplateAnalysis | null>(null);
+  const [tplName, setTplName] = useState('');
+  const [tplErr, setTplErr] = useState('');
+  const [tplDone, setTplDone] = useState<{ sheet: string; rows: number }[] | null>(null);
+
+  const loadTemplate = async (file: File | undefined) => {
+    if (!file) return;
+    setTplErr(''); setTplDone(null);
+    try {
+      setTpl(await analyzeTemplate(file));
+      setTplName(file.name);
+    } catch (e) {
+      setTplErr(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const fillTemplate = () => {
+    if (!tpl || !result) return;
+    try {
+      const summary = fillAndDownload(tpl, { d: result, a: analysis }, tplName.replace(/\.xlsx?$/i, '') + '-filled.xlsx');
+      setTplDone(summary);
+    } catch (e) {
+      setTplErr(e instanceof Error ? e.message : String(e));
+    }
+  };
 
   const run = async () => {
     setBusy(true); setError(''); setAi(''); setLines([]);
@@ -178,6 +206,51 @@ export default function Discovery() {
             ))}
             {busy && <span className="inline-block h-3.5 w-2 animate-pulse bg-slate-200 align-middle" />}
           </div>
+        </Card>
+      )}
+
+      {/* Use your own Excel template */}
+      {result && (
+        <Card className="mb-5 p-5 border-emerald-200 dark:border-emerald-800">
+          <Section title="Fill YOUR Excel template (keeps your structure & tabs)">
+            <p className="mb-3 text-sm text-slate-500 dark:text-slate-400">
+              Upload your own <code>.xlsx</code> template — it stays on your machine (read in the browser, never sent anywhere). WorkPilot detects each tab's header row, maps the columns to the discovered data (English & Dutch headers), fills the rows, and downloads your workbook with the same tabs and layout.
+            </p>
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700">
+                <FileSpreadsheet size={15} /> Choose template (.xlsx)
+                <input type="file" accept=".xlsx,.xls" className="hidden" onChange={(e) => loadTemplate(e.target.files?.[0])} />
+              </label>
+              {tplName && <span className="text-xs text-slate-400">{tplName}</span>}
+              {tplErr && <span className="text-sm text-red-500">{tplErr}</span>}
+            </div>
+
+            {tpl && (
+              <div className="mt-4 space-y-2">
+                <div className="text-xs font-semibold uppercase text-slate-400">Detected tabs — map each to a dataset:</div>
+                {tpl.sheets.map((s, i) => (
+                  <div key={s.sheetName} className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 p-2.5 text-sm">
+                    <span className="font-medium text-slate-700 dark:text-slate-200">{s.sheetName}</span>
+                    <span className="text-xs text-slate-400">{s.headers.filter(Boolean).slice(0, 6).join(' · ')}{s.headers.filter(Boolean).length > 6 ? ' …' : ''}</span>
+                    <select
+                      value={s.datasetId ?? ''}
+                      onChange={(e) => setTpl((prev) => prev ? { ...prev, sheets: prev.sheets.map((x, j) => j === i ? { ...x, datasetId: e.target.value || null } : x) } : prev)}
+                      className="ml-auto rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-2 py-1 text-xs"
+                    >
+                      <option value="">— skip / leave as-is —</option>
+                      {TEMPLATE_DATASETS.map((d) => <option key={d.id} value={d.id}>{d.label}</option>)}
+                    </select>
+                  </div>
+                ))}
+                <Button onClick={fillTemplate} className="mt-2"><FileSpreadsheet size={15} /> Fill my template & download</Button>
+                {tplDone && (
+                  <div className="mt-2 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 p-3 text-sm text-emerald-700 dark:text-emerald-300">
+                    Done — filled: {tplDone.filter((t) => t.rows > 0).map((t) => `${t.sheet} (${t.rows})`).join(', ') || 'no matching sheets'}. Your template downloaded with its original tabs.
+                  </div>
+                )}
+              </div>
+            )}
+          </Section>
         </Card>
       )}
 
