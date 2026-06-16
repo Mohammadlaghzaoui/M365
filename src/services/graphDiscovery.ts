@@ -33,6 +33,7 @@ export const DISCOVERY_SCOPES = [
   'TeamMember.Read.All',
   'Application.Read.All',
   'Policy.Read.All',
+  'AuditLog.Read.All',
   'DeviceManagementConfiguration.Read.All',
   'DeviceManagementManagedDevices.Read.All',
 ];
@@ -308,7 +309,23 @@ export async function runDiscovery(log: Logger = noop): Promise<DiscoveryResult>
   log(`→ ${licenses.length} license SKU(s), ${licenses.reduce((a, l) => a + l.consumed, 0)} seats consumed`, 'ok');
 
   log('Get-MgUser -All -Property displayName,upn,mail,userType,licenses,signInActivity …', 'cmd');
-  const rawUsers = await getAll<Record<string, unknown>>('/users?$select=displayName,userPrincipalName,mail,userType,accountEnabled,department,jobTitle,usageLocation,assignedLicenses,createdDateTime,signInActivity&$top=999');
+  const USER_SELECT = 'displayName,userPrincipalName,mail,userType,accountEnabled,department,jobTitle,usageLocation,assignedLicenses,createdDateTime';
+  // signInActivity needs AuditLog.Read.All. If that consent is missing the whole
+  // /users call 403s, so fall back to the same query without it (last sign-in
+  // dates are a nice-to-have; the rest of the assessment must still run).
+  let signInBlocked = false;
+  let rawUsers: Record<string, unknown>[];
+  try {
+    rawUsers = await getAll<Record<string, unknown>>(`/users?$select=${USER_SELECT},signInActivity&$top=999`);
+  } catch (e) {
+    if (e instanceof GraphError && (e.status === 403 || e.status === 401)) {
+      signInBlocked = true;
+      log('→ signInActivity needs AuditLog.Read.All (not consented) — retrying without last sign-in dates', 'warn');
+      rawUsers = await getAll<Record<string, unknown>>(`/users?$select=${USER_SELECT}&$top=999`);
+    } else {
+      throw e;
+    }
+  }
   log(`→ ${rawUsers.length} user object(s) retrieved`, 'ok');
   const users: DiscoveryUser[] = rawUsers.map((u) => ({
     displayName: String(u.displayName ?? ''),
@@ -366,6 +383,7 @@ export async function runDiscovery(log: Logger = noop): Promise<DiscoveryResult>
 
   // ---- Extended workloads (each resilient: 403/404 → validation item) ----
   const validations: ValidationItem[] = [];
+  if (signInBlocked) validations.push({ workload: 'Users (sign-in activity)', object: 'signInActivity', status: 403, note: 'Last sign-in dates require AuditLog.Read.All consent; all other user attributes were collected.' });
   const workloads: WorkloadReadiness[] = [];
   const collect = async <T>(workload: string, cmd: string, fn: () => Promise<T[]>, okNote: (n: number) => string): Promise<T[]> => {
     log(cmd, 'cmd');

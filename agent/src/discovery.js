@@ -8,7 +8,7 @@
 export const DISCOVERY_SCOPES = [
   'User.Read.All', 'Group.Read.All', 'Directory.Read.All', 'Organization.Read.All',
   'Domain.Read.All', 'Reports.Read.All', 'Sites.Read.All', 'Application.Read.All',
-  'Policy.Read.All', 'DeviceManagementConfiguration.Read.All', 'DeviceManagementManagedDevices.Read.All',
+  'Policy.Read.All', 'AuditLog.Read.All', 'DeviceManagementConfiguration.Read.All', 'DeviceManagementManagedDevices.Read.All',
 ];
 
 const V1 = 'https://graph.microsoft.com/v1.0';
@@ -91,7 +91,18 @@ export async function runReadOnlyDiscovery(token, log = () => {}) {
   const licenses = skus.map((s) => ({ skuPartNumber: s.skuPartNumber, enabled: s.prepaidUnits?.enabled ?? 0, consumed: s.consumedUnits ?? 0, available: (s.prepaidUnits?.enabled ?? 0) - (s.consumedUnits ?? 0) }));
   log(`Get-MgSubscribedSku -> ${licenses.length} SKU(s)`, 'ok');
 
-  const rawUsers = await gall(token, '/users?$select=displayName,userPrincipalName,mail,userType,accountEnabled,department,jobTitle,usageLocation,assignedLicenses,createdDateTime,signInActivity&$top=999');
+  const USER_SELECT = 'displayName,userPrincipalName,mail,userType,accountEnabled,department,jobTitle,usageLocation,assignedLicenses,createdDateTime';
+  // signInActivity needs AuditLog.Read.All — fall back without it if not consented.
+  let rawUsers;
+  try {
+    rawUsers = await gall(token, `/users?$select=${USER_SELECT},signInActivity&$top=999`);
+  } catch (e) {
+    if (e.status === 403 || e.status === 401) {
+      log('signInActivity needs AuditLog.Read.All (not consented) — retrying without last sign-in dates', 'warn');
+      validations.push({ workload: 'Users (sign-in activity)', object: 'signInActivity', status: 403, note: 'Last sign-in dates require AuditLog.Read.All consent; all other user attributes were collected.' });
+      rawUsers = await gall(token, `/users?$select=${USER_SELECT}&$top=999`);
+    } else { throw e; }
+  }
   const users = rawUsers.map((u) => ({
     displayName: u.displayName ?? '', userPrincipalName: u.userPrincipalName ?? '', mail: u.mail ?? '',
     userType: u.userType ?? 'Member', accountEnabled: u.accountEnabled !== false, department: u.department ?? '',
