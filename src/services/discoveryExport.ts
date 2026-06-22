@@ -3,9 +3,14 @@ import { Assessment } from './migrationAssessment';
 import { Sheet, downloadWorkbook } from './excelExport';
 import { recordExportAudit } from './tenantStore';
 import { getSession } from './auth';
+import { getSiteCode, getMigrationTarget, endpointClassOf, deviceTypeLabel, suggestedName, proposedLicenseOf } from './naming';
 
 /** Build the full multi-sheet discovery workbook (shared by Discovery + Tenant detail). */
 export function buildDiscoverySheets(result: DiscoveryResult, analysis: Assessment | null): Sheet[] {
+  const tid = result.org.tenantId;
+  const site = getSiteCode(tid);
+  const target = getMigrationTarget(tid);
+  const workerByUser = new Map(result.users.map((u) => [u.userPrincipalName.toLowerCase(), u.workerType] as const));
   return [
     {
       name: 'Summary',
@@ -40,14 +45,18 @@ export function buildDiscoverySheets(result: DiscoveryResult, analysis: Assessme
       ],
     },
     {
-      name: 'Users',
-      columns: ['Display name', 'UPN', 'Mail', 'Type', 'Enabled', 'Department', 'Job title', 'Usage location', 'Licenses', 'Worker type', 'User category', 'App platforms', 'Last Office activity', 'Devices', 'Device types', 'Created', 'Last sign-in'],
-      rows: result.users.map((u) => [u.displayName, u.userPrincipalName, u.mail, u.userType, u.accountEnabled ? 'Yes' : 'No', u.department, u.jobTitle, u.usageLocation, u.licenses, u.workerType ?? '', u.userCategory ?? '', u.appPlatforms ?? '', u.lastOfficeActivity ?? '', u.deviceCount ?? 0, u.deviceTypes ?? '', u.createdDateTime, u.lastSignIn]),
+      name: 'Users & Licensing',
+      columns: ['Display name', 'UPN', 'Type', 'Enabled', 'Department', 'Worker type', 'Login evidence', 'Current licenses', 'Proposed target license', 'Action', 'Last sign-in'],
+      rows: result.users.filter((u) => u.userType !== 'Guest').map((u) => [u.displayName, u.userPrincipalName, u.userType, u.accountEnabled ? 'Yes' : 'No', u.department, u.workerType || '', u.appPlatforms || 'No evidence', u.licenses || '', proposedLicenseOf(u.workerType || ''), u.workerType ? 'Assign on cutover' : 'Validate manually', u.lastSignIn]),
     },
     {
-      name: 'Office vs Field users',
-      columns: ['UPN', 'Display name', 'Worker type', 'Category', 'App platforms', 'Last Office activity', 'Licenses', 'Devices', 'Device types'],
-      rows: result.users.filter((u) => u.accountEnabled && u.userType !== 'Guest').map((u) => [u.userPrincipalName, u.displayName, u.workerType ?? '', u.userCategory ?? '', u.appPlatforms ?? '', u.lastOfficeActivity ?? '', u.licenses, u.deviceCount ?? 0, u.deviceTypes ?? '']),
+      name: 'Endpoint Plan',
+      columns: ['Current device name', 'Endpoint class', 'Operating system', 'Likely user', 'Suggested new name', 'Device type', 'Naming convention', 'Validation / action', 'Source'],
+      rows: (result.deviceInventory ?? []).map((d) => {
+        const wt = workerByUser.get((d.user || '').toLowerCase()) ?? '';
+        const sug = suggestedName(site, d, wt);
+        return [d.deviceName, endpointClassOf(d.formFactor) || '', `${d.os}${d.osVersion ? ' ' + d.osVersion : ''}`.trim(), d.user || '', sug, deviceTypeLabel(d.formFactor), sug ? `${site}-[Worker][Device][Last5]` : '', sug ? 'Rename to suggested' : 'Validate manually', d.source ?? ''];
+      }),
     },
     {
       name: 'Groups',
@@ -78,11 +87,10 @@ export function buildDiscoverySheets(result: DiscoveryResult, analysis: Assessme
       name: 'Naming convention',
       columns: ['Category', 'Name', 'Code'],
       rows: [
-        ['Format', 'Workstation name = <SITE><n>-<WorkerType><DeviceType>-<Serial>  (e.g. AHA1-OW-BC349BC34)', ''],
-        ['Worker type', 'Field', 'F'], ['Worker type', 'Office', 'O'], ['Worker type', 'Temp', 'T'], ['Worker type', 'Kiosk / Common / Shared', 'K'],
-        ['Device type', 'Office Laptop', 'L'], ['Device type', 'Office Desktop', 'D'], ['Device type', 'Engineering Laptop', 'W'], ['Device type', 'Engineering Desktop', 'X'],
-        ['Device type', 'Executive Laptop', 'E'], ['Device type', 'Executive Desktop', 'F'], ['Device type', 'Mac Computers', 'M'], ['Device type', 'Server', 'S'],
-        ['Device type', 'Network Devices', 'N'], ['Device type', 'Appliance / IOT', 'A'], ['Device type', 'Phone', 'P'], ['Device type', 'Tablet', 'T'],
+        ['Format', `Workstation name = ${site}-[WorkerCode][DeviceCode][Last5]  (e.g. ${site}-OL12345)`, ''],
+        ['Site / company code', `${result.org.displayName} (source) → ${target} (target)`, site],
+        ['Worker code', 'Office', 'O'], ['Worker code', 'Field', 'F'], ['Worker code', 'Temp', 'T'], ['Worker code', 'Kiosk', 'K'],
+        ['Device code', 'Laptop', 'L'], ['Device code', 'Desktop', 'D'], ['Device code', 'Phone', 'P'], ['Device code', 'Tablet', 'T'], ['Device code', 'Mac', 'M'],
       ],
     },
     {

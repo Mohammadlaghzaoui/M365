@@ -37,22 +37,21 @@ export default function TenantPortfolio() {
     const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
     return days <= 0 ? 'today' : days === 1 ? 'yesterday' : `${days} days ago`;
   };
-  const barColor = (p: number) => (p >= 75 ? 'bg-emerald-500' : p >= 40 ? 'bg-amber-500' : 'bg-rose-500');
-  const initials = (n: string) => n.split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
-  const gradients = ['from-blue-500 to-indigo-600', 'from-emerald-500 to-teal-600', 'from-violet-500 to-purple-600', 'from-amber-500 to-orange-600', 'from-rose-500 to-pink-600', 'from-cyan-500 to-blue-600'];
+  const barColor = (p: number) => (p >= 75 ? 'bg-emerald-600' : p >= 40 ? 'bg-amber-500' : 'bg-rose-500');
+  const initials = (n: string) => n.slice(0, 2).toUpperCase();
 
   return (
     <div>
-      <PageHeader title="Tenant Portfolio" subtitle="Every Microsoft 365 tenant you connect stays here — with its live assessment progress — until you remove it." icon={<Layers size={20} />} />
+      <PageHeader title="Source Tenants" subtitle="The Microsoft 365 source tenants you are assessing for migration. Each stays here with its assessment until you remove it." icon={<Layers size={20} />} />
 
       {/* Portfolio KPIs */}
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-5">
         {[
-          { icon: Building2, label: 'Tenants', value: tenants.length, color: 'text-blue-600 dark:text-blue-400' },
-          { icon: Users2, label: 'Total users', value: totals.users.toLocaleString(), color: 'text-violet-600 dark:text-violet-400' },
-          { icon: Server, label: 'Managed devices', value: totals.devices.toLocaleString(), color: 'text-emerald-600 dark:text-emerald-400' },
-          { icon: HardDrive, label: 'Total data', value: fmtData(totals.dataGB), color: 'text-amber-600 dark:text-amber-400' },
-          { icon: Monitor, label: 'Desktop / mobile', value: `${totals.desktop} / ${totals.mobile}`, color: 'text-cyan-600 dark:text-cyan-400' },
+          { icon: Building2, label: 'Source tenants', value: tenants.length, color: 'text-slate-600 dark:text-slate-300' },
+          { icon: Users2, label: 'Total users', value: totals.users.toLocaleString(), color: 'text-slate-600 dark:text-slate-300' },
+          { icon: Server, label: 'Devices', value: totals.devices.toLocaleString(), color: 'text-slate-600 dark:text-slate-300' },
+          { icon: HardDrive, label: 'Total data', value: fmtData(totals.dataGB), color: 'text-slate-600 dark:text-slate-300' },
+          { icon: Monitor, label: 'Office / field', value: `${totals.desktop} / ${totals.mobile}`, color: 'text-slate-600 dark:text-slate-300' },
         ].map((k) => (
           <Card key={k.label} className="p-4">
             <div className="flex items-center gap-3">
@@ -67,8 +66,8 @@ export default function TenantPortfolio() {
       </div>
 
       <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Connected tenants</h2>
-        <Button onClick={() => nav('/discovery')}><Plus size={15} /> Connect a tenant</Button>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Source tenants</h2>
+        <Button onClick={() => nav('/discovery')}><Plus size={15} /> Connect a source tenant</Button>
       </div>
 
       {tenants.length === 0 ? (
@@ -80,10 +79,10 @@ export default function TenantPortfolio() {
         </Card>
       ) : (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
-          {tenants.map((t, i) => (
+          {tenants.map((t) => (
             <Card key={t.tenantId} className="flex flex-col p-5">
               <div className="mb-3 flex items-start gap-3">
-                <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${gradients[i % gradients.length]} text-sm font-bold text-white shadow-sm`}>
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded bg-slate-800 text-sm font-bold text-white">
                   {initials(t.displayName)}
                 </div>
                 <div className="min-w-0 flex-1">
@@ -118,8 +117,8 @@ export default function TenantPortfolio() {
               </div>
 
               <div className="mb-4 flex items-center gap-3 text-xs text-slate-500 dark:text-slate-400">
-                <span className="inline-flex items-center gap-1"><Monitor size={13} className="text-cyan-500" /> {t.desktopUsers ?? 0} desktop</span>
-                <span className="inline-flex items-center gap-1"><Smartphone size={13} className="text-violet-500" /> {t.mobileUsers ?? 0} mobile</span>
+                <span className="inline-flex items-center gap-1"><Monitor size={13} /> {t.desktopUsers ?? 0} office</span>
+                <span className="inline-flex items-center gap-1"><Smartphone size={13} /> {t.mobileUsers ?? 0} field</span>
                 <span className="ml-auto">Assessed {relative(t.fetchedAt)}</span>
               </div>
 

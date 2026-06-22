@@ -19,7 +19,7 @@ export const NAV = [
   { to: '/exchange', label: 'Exchange Online', icon: Mail, group: 'Helpdesk' },
   { to: '/sharepoint', label: 'SharePoint Online', icon: Boxes, group: 'Helpdesk' },
   { to: '/teams', label: 'Microsoft Teams', icon: Users, group: 'Helpdesk' },
-  { to: '/tenants', label: 'Tenant Portfolio', icon: Layers, group: 'Migration' },
+  { to: '/tenants', label: 'Source Tenant', icon: Layers, group: 'Migration' },
   { to: '/discovery', label: 'Migration Discovery', icon: Radar, group: 'Migration' },
   { to: '/migration', label: 'Migration Projects', icon: FolderKanban, group: 'Migration' },
   { to: '/migration-console', label: 'Migration Console', icon: MonitorPlay, group: 'Migration' },
