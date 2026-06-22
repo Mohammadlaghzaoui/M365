@@ -95,12 +95,12 @@ export async function runReadOnlyDiscovery(token, log = () => {}) {
   log(`Get-MgOrganization -> ${org.displayName} (${org.id})`, 'ok');
 
   const domainData = await gget(token, '/domains');
-  const domains = (domainData.value ?? []).map((d) => ({ id: d.id, isDefault: d.isDefault, isVerified: d.isVerified, supportedServices: (d.supportedServices ?? []).join(', ') }));
+  const domains = (domainData.value ?? []).map((d) => ({ id: d.id, authType: String(d.authenticationType ?? 'Managed'), isDefault: d.isDefault, isVerified: d.isVerified, supportedServices: (d.supportedServices ?? []).join(', ') }));
   log(`Get-MgDomain -> ${domains.length} domain(s)`, 'ok');
 
   const skuData = await gget(token, '/subscribedSkus');
   const skus = skuData.value ?? [];
-  const licenses = skus.map((s) => ({ skuPartNumber: s.skuPartNumber, enabled: s.prepaidUnits?.enabled ?? 0, consumed: s.consumedUnits ?? 0, available: (s.prepaidUnits?.enabled ?? 0) - (s.consumedUnits ?? 0) }));
+  const licenses = skus.map((s) => ({ skuPartNumber: s.skuPartNumber, enabled: s.prepaidUnits?.enabled ?? 0, consumed: s.consumedUnits ?? 0, available: (s.prepaidUnits?.enabled ?? 0) - (s.consumedUnits ?? 0), plans: (s.servicePlans ?? []).filter((x) => /success/i.test(x.provisioningStatus)).map((x) => x.servicePlanName).slice(0, 30).join(', ') }));
   log(`Get-MgSubscribedSku -> ${licenses.length} SKU(s)`, 'ok');
 
   const USER_SELECT = 'displayName,userPrincipalName,mail,userType,accountEnabled,department,jobTitle,usageLocation,assignedLicenses,createdDateTime,proxyAddresses,onPremisesSyncEnabled,companyName,officeLocation,mobilePhone';
@@ -125,7 +125,7 @@ export async function runReadOnlyDiscovery(token, log = () => {}) {
     lastSignIn: String(u.signInActivity?.lastSignInDateTime ?? '').slice(0, 10),
     appPlatforms: '', userCategory: '', workerType: '', lastOfficeActivity: '', deviceCount: 0, deviceTypes: '',
     aliases: ((u.proxyAddresses ?? []).filter((p) => /^smtp:/i.test(p)).map((p) => p.replace(/^smtp:/i, '')).join(', ')),
-    hybrid: u.onPremisesSyncEnabled === true ? 'Synced (AD)' : 'Cloud only', company: u.companyName ?? '', office: u.officeLocation ?? '', mobile: u.mobilePhone ?? '', manager: u.manager?.userPrincipalName ?? '', mailboxType: '', mailboxGB: 0,
+    hybrid: u.onPremisesSyncEnabled === true ? 'Synced (AD)' : 'Cloud only', company: u.companyName ?? '', office: u.officeLocation ?? '', mobile: u.mobilePhone ?? '', manager: u.manager?.userPrincipalName ?? '', mailboxType: '', mailboxGB: 0, mailboxItems: 0, oneDriveGB: 0, mfa: '', authMethods: '',
   }));
   const guests = users.filter((u) => u.userType === 'Guest').length;
   const disabled = users.filter((u) => !u.accountEnabled).length;
@@ -137,7 +137,7 @@ export async function runReadOnlyDiscovery(token, log = () => {}) {
     const isM365 = types.includes('Unified');
     const isTeam = (g.resourceProvisioningOptions ?? []).includes('Team');
     const groupType = isM365 ? 'Microsoft 365' : g.securityEnabled && g.mailEnabled ? 'Mail-enabled security' : g.securityEnabled ? 'Security' : g.mailEnabled ? 'Distribution' : 'Other';
-    return { displayName: g.displayName ?? '', mail: g.mail ?? '', groupType, membershipType: types.includes('DynamicMembership') ? 'Dynamic' : 'Assigned', members: 0, visibility: g.visibility ?? '', isTeam };
+    return { id: g.id ?? '', displayName: g.displayName ?? '', mail: g.mail ?? '', groupType, membershipType: types.includes('DynamicMembership') ? 'Dynamic' : 'Assigned', members: 0, owners: '', visibility: g.visibility ?? '', isTeam };
   });
   const m365Groups = groups.filter((g) => g.groupType === 'Microsoft 365').length;
   const teams = groups.filter((g) => g.isTeam).length;

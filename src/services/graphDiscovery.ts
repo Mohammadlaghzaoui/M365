@@ -64,7 +64,7 @@ async function graphFetch(full: string, token: string, tries = 4): Promise<Respo
   }
 }
 
-interface BatchReq { id: string; url: string }
+interface BatchReq { id: string; url: string; headers?: Record<string, string> }
 interface BatchResp { id: string; status: number; body: unknown }
 
 /** Graph $batch — up to 20 GET requests per call, 429-aware. Read-only. */
@@ -73,7 +73,7 @@ async function graphBatch(requests: BatchReq[]): Promise<Map<string, BatchResp>>
   const out = new Map<string, BatchResp>();
   for (let i = 0; i < requests.length; i += 20) {
     const chunk = requests.slice(i, i + 20);
-    const body = { requests: chunk.map((r) => ({ id: r.id, method: 'GET', url: r.url })) };
+    const body = { requests: chunk.map((r) => ({ id: r.id, method: 'GET', url: r.url, ...(r.headers ? { headers: r.headers } : {}) })) };
     let res: Response;
     for (let attempt = 0; ; attempt++) {
       res = await fetch(`${V1}/$batch`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -141,14 +141,20 @@ export interface DiscoveryUser {
   manager: string;          // manager UPN
   mailboxType: string;      // "User" | "Shared (likely)" | "No mailbox"
   mailboxGB: number;        // mailbox size from the usage report
+  mailboxItems: number;     // mailbox item count
+  oneDriveGB: number;       // OneDrive size from the usage report
+  mfa: string;              // "Registered" | "Not registered" | ""
+  authMethods: string;      // registered auth methods
 }
 
 export interface DiscoveryGroup {
+  id: string;
   displayName: string;
   mail: string;
   groupType: string;
   membershipType: string;
   members: number;
+  owners: string;
   visibility: string;
   isTeam: boolean;
 }
@@ -158,10 +164,12 @@ export interface DiscoveryLicense {
   enabled: number;
   consumed: number;
   available: number;
+  plans: string;            // enabled service plans
 }
 
 export interface DiscoveryDomain {
   id: string;
+  authType: string;         // "Managed" | "Federated"
   isDefault: boolean;
   isVerified: boolean;
   supportedServices: string;
@@ -172,6 +180,8 @@ export interface UsageStats {
   mailboxTotalGB: number;
   mailboxUpns: string[];     // lowercased UPNs that have a mailbox (for shared-mailbox detection)
   mailboxSizes: Record<string, number>;  // lowercased UPN -> GB
+  mailboxItems: Record<string, number>;   // lowercased UPN -> item count
+  oneDriveSizes: Record<string, number>;  // lowercased UPN -> GB
   mailboxLargest: { upn: string; gb: number }[];
   mailboxOver50GB: number;
   archiveCount: number;
@@ -297,14 +307,15 @@ async function getReportCsv(path: string): Promise<Record<string, string>[]> {
 const toGB = (bytes: string | number) => Math.round((Number(bytes) || 0) / 1073741824 * 100) / 100;
 
 export async function runUsage(log: Logger = noop): Promise<UsageStats> {
-  const empty: UsageStats = { mailboxCount: 0, mailboxTotalGB: 0, mailboxUpns: [], mailboxSizes: {}, mailboxLargest: [], mailboxOver50GB: 0, archiveCount: 0, oneDriveCount: 0, oneDriveTotalGB: 0, oneDriveOver100GB: 0, spoSiteCount: 0, spoTotalGB: 0, available: false };
+  const empty: UsageStats = { mailboxCount: 0, mailboxTotalGB: 0, mailboxUpns: [], mailboxSizes: {}, mailboxItems: {}, oneDriveSizes: {}, mailboxLargest: [], mailboxOver50GB: 0, archiveCount: 0, oneDriveCount: 0, oneDriveTotalGB: 0, oneDriveOver100GB: 0, spoSiteCount: 0, spoTotalGB: 0, available: false };
   try {
     log("Get-MgReportMailboxUsageDetail -Period D30", 'cmd');
     const mbx = await getReportCsv("/reports/getMailboxUsageDetail(period='D30')?$format=text/csv");
     const sizeKey = Object.keys(mbx[0] ?? {}).find((k) => /Storage Used/i.test(k)) ?? 'Storage Used (Byte)';
     const upnKey = Object.keys(mbx[0] ?? {}).find((k) => /User Principal Name/i.test(k)) ?? 'User Principal Name';
     const archiveKey = Object.keys(mbx[0] ?? {}).find((k) => /Has Archive/i.test(k));
-    const mailboxes = mbx.map((r) => ({ upn: r[upnKey] || '(hidden)', gb: toGB(r[sizeKey]), archive: archiveKey ? /true|yes/i.test(r[archiveKey]) : false }));
+    const itemKey = Object.keys(mbx[0] ?? {}).find((k) => /Item Count/i.test(k));
+    const mailboxes = mbx.map((r) => ({ upn: r[upnKey] || '(hidden)', gb: toGB(r[sizeKey]), items: itemKey ? Number(r[itemKey]) || 0 : 0, archive: archiveKey ? /true|yes/i.test(r[archiveKey]) : false }));
     const mailboxTotalGB = Math.round(mailboxes.reduce((a, m) => a + m.gb, 0));
     const largest = [...mailboxes].sort((a, b) => b.gb - a.gb).slice(0, 10).map((m) => ({ upn: m.upn, gb: m.gb }));
     log(`→ ${mailboxes.length} mailbox(es), ${mailboxTotalGB.toLocaleString()} GB total (largest ${largest[0]?.gb ?? 0} GB)`, 'ok');
@@ -312,8 +323,11 @@ export async function runUsage(log: Logger = noop): Promise<UsageStats> {
     log("Get-MgReportOneDriveUsageAccountDetail -Period D30", 'cmd');
     const od = await getReportCsv("/reports/getOneDriveUsageAccountDetail(period='D30')?$format=text/csv");
     const odSizeKey = Object.keys(od[0] ?? {}).find((k) => /Storage Used/i.test(k)) ?? 'Storage Used (Byte)';
+    const odOwnerKey = Object.keys(od[0] ?? {}).find((k) => /Owner Principal Name/i.test(k));
     const odSizes = od.map((r) => toGB(r[odSizeKey]));
     const oneDriveTotalGB = Math.round(odSizes.reduce((a, b) => a + b, 0));
+    const oneDriveSizes: Record<string, number> = {};
+    if (odOwnerKey) for (const r of od) { const o = (r[odOwnerKey] || '').toLowerCase(); if (o) oneDriveSizes[o] = toGB(r[odSizeKey]); }
     log(`→ ${od.length} OneDrive account(s), ${oneDriveTotalGB.toLocaleString()} GB total`, 'ok');
 
     log("Get-MgReportSharePointSiteUsageDetail -Period D30", 'cmd');
@@ -327,6 +341,8 @@ export async function runUsage(log: Logger = noop): Promise<UsageStats> {
       mailboxTotalGB,
       mailboxUpns: mailboxes.map((m) => m.upn.toLowerCase()),
       mailboxSizes: Object.fromEntries(mailboxes.map((m) => [m.upn.toLowerCase(), m.gb])),
+      mailboxItems: Object.fromEntries(mailboxes.map((m) => [m.upn.toLowerCase(), m.items])),
+      oneDriveSizes,
       mailboxLargest: largest,
       mailboxOver50GB: mailboxes.filter((m) => m.gb > 50).length,
       archiveCount: mailboxes.filter((m) => m.archive).length,
@@ -357,20 +373,22 @@ export async function runDiscovery(log: Logger = noop): Promise<DiscoveryResult>
   log(`→ Tenant "${org.displayName}" (${org.id})`, 'ok');
 
   log('Get-MgDomain', 'cmd');
-  const domainData = await get<{ value: { id: string; isDefault: boolean; isVerified: boolean; supportedServices: string[] }[] }>('/domains');
+  const domainData = await get<{ value: { id: string; authenticationType?: string; isDefault: boolean; isVerified: boolean; supportedServices: string[] }[] }>('/domains');
   const domains: DiscoveryDomain[] = (domainData.value ?? []).map((d) => ({
-    id: d.id, isDefault: d.isDefault, isVerified: d.isVerified, supportedServices: (d.supportedServices ?? []).join(', '),
+    id: d.id, authType: String(d.authenticationType ?? 'Managed'), isDefault: d.isDefault, isVerified: d.isVerified, supportedServices: (d.supportedServices ?? []).join(', '),
   }));
-  log(`→ ${domains.length} domain(s): ${domains.map((d) => d.id).slice(0, 5).join(', ')}${domains.length > 5 ? ' …' : ''}`, 'ok');
+  const federated = domains.filter((d) => /federat/i.test(d.authType)).length;
+  log(`→ ${domains.length} domain(s): ${domains.map((d) => d.id).slice(0, 5).join(', ')}${domains.length > 5 ? ' …' : ''}${federated ? ` — ${federated} FEDERATED (ADFS)` : ''}`, federated ? 'warn' : 'ok');
 
   log('Get-MgSubscribedSku', 'cmd');
-  const skuData = await get<{ value: { skuId: string; skuPartNumber: string; consumedUnits: number; prepaidUnits: { enabled: number } }[] }>('/subscribedSkus');
+  const skuData = await get<{ value: { skuId: string; skuPartNumber: string; consumedUnits: number; prepaidUnits: { enabled: number }; servicePlans?: { servicePlanName: string; provisioningStatus: string }[] }[] }>('/subscribedSkus');
   const skus = skuData.value ?? [];
   const licenses: DiscoveryLicense[] = skus.map((s) => ({
     skuPartNumber: s.skuPartNumber,
     enabled: s.prepaidUnits?.enabled ?? 0,
     consumed: s.consumedUnits ?? 0,
     available: (s.prepaidUnits?.enabled ?? 0) - (s.consumedUnits ?? 0),
+    plans: (s.servicePlans ?? []).filter((p) => /success/i.test(p.provisioningStatus)).map((p) => p.servicePlanName).slice(0, 30).join(', '),
   }));
   log(`→ ${licenses.length} license SKU(s), ${licenses.reduce((a, l) => a + l.consumed, 0)} seats consumed`, 'ok');
 
@@ -414,25 +432,27 @@ export async function runDiscovery(log: Logger = noop): Promise<DiscoveryResult>
     office: String(u.officeLocation ?? ''),
     mobile: String(u.mobilePhone ?? ''),
     manager: String((u.manager as { userPrincipalName?: string })?.userPrincipalName ?? ''),
-    mailboxType: '', mailboxGB: 0,
+    mailboxType: '', mailboxGB: 0, mailboxItems: 0, oneDriveGB: 0, mfa: '', authMethods: '',
   }));
   const guests = users.filter((u) => u.userType === 'Guest').length;
   const disabled = users.filter((u) => !u.accountEnabled).length;
   log(`   ${guests} guest(s), ${disabled} disabled, ${users.length - guests - disabled} active member(s)`, 'info');
 
-  log('Get-MgGroup -All -Property displayName,groupTypes,resourceProvisioningOptions …', 'cmd');
-  const rawGroups = await getAll<Record<string, unknown>>('/groups?$select=displayName,mail,groupTypes,securityEnabled,mailEnabled,visibility,resourceProvisioningOptions&$top=999');
+  log('Get-MgGroup -All -Property id,displayName,groupTypes,resourceProvisioningOptions …', 'cmd');
+  const rawGroups = await getAll<Record<string, unknown>>('/groups?$select=id,displayName,mail,groupTypes,securityEnabled,mailEnabled,visibility,resourceProvisioningOptions&$top=999');
   const groups: DiscoveryGroup[] = rawGroups.map((g) => {
     const types = (g.groupTypes as string[]) ?? [];
     const isM365 = types.includes('Unified');
     const isTeam = ((g.resourceProvisioningOptions as string[]) ?? []).includes('Team');
     const groupType = isM365 ? 'Microsoft 365' : g.securityEnabled && g.mailEnabled ? 'Mail-enabled security' : g.securityEnabled ? 'Security' : g.mailEnabled ? 'Distribution' : 'Other';
     return {
+      id: String(g.id ?? ''),
       displayName: String(g.displayName ?? ''),
       mail: String(g.mail ?? ''),
       groupType,
       membershipType: types.includes('DynamicMembership') ? 'Dynamic' : 'Assigned',
       members: 0,
+      owners: '',
       visibility: String(g.visibility ?? ''),
       isTeam,
     };
@@ -442,6 +462,29 @@ export async function runDiscovery(log: Logger = noop): Promise<DiscoveryResult>
   const securityGroups = groups.filter((g) => g.groupType.includes('Security')).length;
   const distributionGroups = groups.filter((g) => g.groupType === 'Distribution').length;
   log(`→ ${groups.length} group(s): ${m365Groups} M365, ${teams} Teams, ${securityGroups} security, ${distributionGroups} distribution`, 'ok');
+
+  // Owners + member counts per group (batched, capped) — needed to recreate groups.
+  try {
+    const GROUP_CAP = 200;
+    const targets = groups.slice(0, GROUP_CAP).filter((g) => g.id);
+    const reqs: BatchReq[] = [];
+    targets.forEach((g, i) => {
+      reqs.push({ id: `o${i}`, url: `/groups/${g.id}/owners?$select=userPrincipalName&$top=20` });
+      reqs.push({ id: `m${i}`, url: `/groups/${g.id}/members/$count`, headers: { ConsistencyLevel: 'eventual' } });
+    });
+    if (reqs.length) {
+      log(`Get-MgGroupOwner / Get-MgGroupMember -Count  (${targets.length} groups)`, 'cmd');
+      const res = await graphBatch(reqs);
+      targets.forEach((g, i) => {
+        const ow = res.get(`o${i}`); const mc = res.get(`m${i}`);
+        if (ow?.status === 200) g.owners = (((ow.body as { value?: { userPrincipalName?: string }[] })?.value) ?? []).map((o) => o.userPrincipalName ?? '').filter(Boolean).join(', ');
+        if (mc && mc.status === 200) g.members = Number(mc.body) || 0;
+      });
+      log(`→ owners + member counts resolved for ${targets.length} group(s)`, 'ok');
+    }
+  } catch (e) {
+    log(`→ group owners/members partial: ${e instanceof Error ? e.message : e}`, 'warn');
+  }
 
   // Devices come from TWO sources so nothing is missed:
   //  1. Intune managed devices (rich: serial, compliance, encryption) — needs Intune.
@@ -587,17 +630,37 @@ export async function runDiscovery(log: Logger = noop): Promise<DiscoveryResult>
 
   const usage = await runUsage(log);
 
-  // Shared-mailbox heuristic: a user with a mailbox but no assigned licence is
-  // most likely a shared mailbox (migrate as shared, not as a licensed user).
-  if (usage.mailboxUpns.length) {
+  // Per-user mailbox / OneDrive detail from the usage reports.
+  if (usage.mailboxUpns.length || Object.keys(usage.oneDriveSizes).length) {
     const mbxSet = new Set(usage.mailboxUpns);
     for (const u of users) {
       const upn = u.userPrincipalName.toLowerCase();
-      const has = mbxSet.has(upn) || (u.mail && mbxSet.has(u.mail.toLowerCase()));
+      const mailLc = u.mail ? u.mail.toLowerCase() : '';
+      const has = mbxSet.has(upn) || (mailLc && mbxSet.has(mailLc));
       u.mailboxType = has ? (u.licenses ? 'User' : 'Shared (likely)') : 'No mailbox';
-      u.mailboxGB = usage.mailboxSizes[upn] ?? (u.mail ? usage.mailboxSizes[u.mail.toLowerCase()] : 0) ?? 0;
+      u.mailboxGB = usage.mailboxSizes[upn] ?? (mailLc ? usage.mailboxSizes[mailLc] : 0) ?? 0;
+      u.mailboxItems = usage.mailboxItems[upn] ?? (mailLc ? usage.mailboxItems[mailLc] : 0) ?? 0;
+      u.oneDriveGB = usage.oneDriveSizes[upn] ?? (mailLc ? usage.oneDriveSizes[mailLc] : 0) ?? 0;
     }
     log(`→ ${users.filter((u) => u.mailboxType === 'Shared (likely)').length} likely shared mailbox(es)`, 'info');
+  }
+
+  // MFA / authentication-method registration per user (migration needs re-registration planning).
+  try {
+    log('Get-MgReportAuthenticationMethodUserRegistrationDetail', 'cmd');
+    const reg = await getAll<Record<string, unknown>>('/reports/authenticationMethods/userRegistrationDetails?$top=999');
+    const regMap = new Map(reg.map((x) => [String(x.userPrincipalName ?? '').toLowerCase(), x] as const));
+    let mfaReg = 0;
+    for (const u of users) {
+      const x = regMap.get(u.userPrincipalName.toLowerCase());
+      if (!x) continue;
+      u.mfa = x.isMfaRegistered === true ? 'Registered' : 'Not registered';
+      u.authMethods = ((x.methodsRegistered as string[]) ?? []).join(', ');
+      if (x.isMfaRegistered === true) mfaReg++;
+    }
+    log(`→ MFA registration: ${mfaReg} of ${users.length} users registered`, 'ok');
+  } catch (e) {
+    log(`→ MFA registration report unavailable: ${e instanceof Error ? e.message : e}`, 'warn');
   }
 
   // ---- Extended workloads (each resilient: 403/404 → validation item) ----

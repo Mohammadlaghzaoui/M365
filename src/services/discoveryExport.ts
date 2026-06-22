@@ -47,13 +47,13 @@ export function buildDiscoverySheets(result: DiscoveryResult, analysis: Assessme
     },
     {
       name: 'Users & Licensing',
-      columns: ['Display name', 'UPN', 'Type', 'Enabled', 'Department', 'Worker type', 'Mailbox type', 'Mailbox GB', 'Login evidence', 'Current licenses', 'Proposed target license', 'Action', 'Last sign-in'],
-      rows: result.users.filter((u) => u.userType !== 'Guest').map((u) => [u.displayName, u.userPrincipalName, u.userType, u.accountEnabled ? 'Yes' : 'No', u.department, u.workerType || '', u.mailboxType || '', (u.mailboxGB ?? 0) || '', u.appPlatforms || 'No evidence', u.licenses || '', proposedLicenseOf(u.workerType || ''), u.workerType ? 'Assign on cutover' : 'Validate manually', u.lastSignIn]),
+      columns: ['Display name', 'UPN', 'Type', 'Enabled', 'Department', 'Worker type', 'Mailbox type', 'Mailbox GB', 'OneDrive GB', 'MFA', 'Login evidence', 'Current licenses', 'Proposed target license', 'Action', 'Last sign-in'],
+      rows: result.users.filter((u) => u.userType !== 'Guest').map((u) => [u.displayName, u.userPrincipalName, u.userType, u.accountEnabled ? 'Yes' : 'No', u.department, u.workerType || '', u.mailboxType || '', (u.mailboxGB ?? 0) || '', (u.oneDriveGB ?? 0) || '', u.mfa || '', u.appPlatforms || 'No evidence', u.licenses || '', proposedLicenseOf(u.workerType || ''), u.workerType ? 'Assign on cutover' : 'Validate manually', u.lastSignIn]),
     },
     {
       name: 'Mailboxes & Identity',
-      columns: ['UPN', 'Primary mail', 'Mailbox type', 'Mailbox GB', 'Aliases (SMTP)', 'Identity (AD sync)', 'Manager', 'Company', 'Office', 'Mobile'],
-      rows: result.users.filter((u) => u.userType !== 'Guest').map((u) => [u.userPrincipalName, u.mail || '', u.mailboxType || '', (u.mailboxGB ?? 0) || '', u.aliases || '', u.hybrid || '', u.manager || '', u.company || '', u.office || '', u.mobile || '']),
+      columns: ['UPN', 'Primary mail', 'Mailbox type', 'Mailbox GB', 'Mailbox items', 'OneDrive GB', 'MFA', 'Auth methods', 'Aliases (SMTP)', 'Identity (AD sync)', 'Manager', 'Company', 'Office', 'Mobile'],
+      rows: result.users.filter((u) => u.userType !== 'Guest').map((u) => [u.userPrincipalName, u.mail || '', u.mailboxType || '', (u.mailboxGB ?? 0) || '', (u.mailboxItems ?? 0) || '', (u.oneDriveGB ?? 0) || '', u.mfa || '', u.authMethods || '', u.aliases || '', u.hybrid || '', u.manager || '', u.company || '', u.office || '', u.mobile || '']),
     },
     {
       name: 'Test Migration (Pilot)',
@@ -76,18 +76,18 @@ export function buildDiscoverySheets(result: DiscoveryResult, analysis: Assessme
     },
     {
       name: 'Groups',
-      columns: ['Display name', 'Mail', 'Type', 'Membership', 'Visibility', 'Is Team'],
-      rows: result.groups.map((g) => [g.displayName, g.mail, g.groupType, g.membershipType, g.visibility, g.isTeam ? 'Yes' : 'No']),
+      columns: ['Display name', 'Mail', 'Type', 'Membership', 'Members', 'Owners', 'Visibility', 'Is Team'],
+      rows: result.groups.map((g) => [g.displayName, g.mail, g.groupType, g.membershipType, g.members || 0, g.owners || '', g.visibility, g.isTeam ? 'Yes' : 'No']),
     },
     {
       name: 'Licenses',
-      columns: ['SKU', 'Enabled', 'Consumed', 'Available'],
-      rows: result.licenses.map((l) => [l.skuPartNumber, l.enabled, l.consumed, l.available]),
+      columns: ['SKU', 'Enabled', 'Consumed', 'Available', 'Enabled service plans'],
+      rows: result.licenses.map((l) => [l.skuPartNumber, l.enabled, l.consumed, l.available, l.plans || '']),
     },
     {
       name: 'Domains',
-      columns: ['Domain', 'Default', 'Verified', 'Services'],
-      rows: result.domains.map((d) => [d.id, d.isDefault ? 'Yes' : 'No', d.isVerified ? 'Yes' : 'No', d.supportedServices]),
+      columns: ['Domain', 'Authentication', 'Default', 'Verified', 'Services'],
+      rows: result.domains.map((d) => [d.id, d.authType || 'Managed', d.isDefault ? 'Yes' : 'No', d.isVerified ? 'Yes' : 'No', d.supportedServices]),
     },
     {
       name: 'Devices by OS',

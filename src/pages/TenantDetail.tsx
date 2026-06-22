@@ -236,7 +236,17 @@ export default function TenantDetail() {
 
       {/* 1. Overview */}
       <Section id="overview" n={1} title="Source Tenant Overview" desc={`What was collected from ${r.org.displayName} for the migration to ${target}.`}>
-        <DataTable columns={['Metric', 'Value']} rows={overviewRows} align={{ 1: 'right' }} />
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+          <DataTable columns={['Metric', 'Value']} rows={overviewRows} align={{ 1: 'right' }} />
+          <div>
+            <div className="mb-2 text-sm font-medium text-slate-700 dark:text-slate-200">Domains ({r.domains.length})</div>
+            <DataTable
+              columns={['Domain', 'Authentication', 'Default', 'Verified']}
+              rows={r.domains.map((d) => [d.id, <Chip label={d.authType || 'Managed'} tone={/federat/i.test(d.authType) ? 'red' : 'slate'} />, d.isDefault ? 'Yes' : 'No', d.isVerified ? 'Yes' : 'No'])}
+            />
+            {r.domains.some((d) => /federat/i.test(d.authType)) && <p className="mt-2 text-xs text-rose-600">Federated domain(s) detected — ADFS/SSO must be re-planned in the target tenant.</p>}
+          </div>
+        </div>
       </Section>
 
       {/* 2. Users & Licensing */}
@@ -261,13 +271,22 @@ export default function TenantDetail() {
         />
         <h3 className="mb-2 mt-6 text-sm font-semibold text-slate-700 dark:text-slate-200">Mailboxes &amp; identity detail</h3>
         <DataTable
-          columns={['UPN', 'Primary mail', 'Mailbox type', 'Mailbox GB', 'Aliases (SMTP)', 'Identity', 'Manager', 'Company', 'Office', 'Mobile']}
+          columns={['UPN', 'Mailbox type', 'Mailbox GB', 'Items', 'OneDrive GB', 'MFA', 'Aliases (SMTP)', 'Identity', 'Manager']}
           rows={r.users.filter((u) => u.userType !== 'Guest').map((u) => [
-            u.userPrincipalName, u.mail || '—', <Chip label={u.mailboxType || '—'} tone={mailboxTone(u.mailboxType)} />,
-            (u.mailboxGB ?? 0) ? (u.mailboxGB ?? 0).toFixed(2) : '—', u.aliases || '—',
-            <Chip label={u.hybrid || '—'} tone={/synced/i.test(u.hybrid) ? 'amber' : 'slate'} />, u.manager || '—', u.company || '—', u.office || '—', u.mobile || '—',
+            u.userPrincipalName, <Chip label={u.mailboxType || '—'} tone={mailboxTone(u.mailboxType)} />,
+            (u.mailboxGB ?? 0) ? (u.mailboxGB ?? 0).toFixed(2) : '—', (u.mailboxItems ?? 0) ? (u.mailboxItems ?? 0).toLocaleString() : '—',
+            (u.oneDriveGB ?? 0) ? (u.oneDriveGB ?? 0).toFixed(1) : '—',
+            u.mfa ? <Chip label={u.mfa} tone={u.mfa === 'Registered' ? 'green' : 'red'} /> : '—',
+            u.aliases || '—', <Chip label={u.hybrid || '—'} tone={/synced/i.test(u.hybrid) ? 'amber' : 'slate'} />, u.manager || '—',
           ])}
-          align={{ 3: 'right' }}
+          align={{ 2: 'right', 3: 'right', 4: 'right' }}
+        />
+
+        <h3 className="mb-2 mt-6 text-sm font-semibold text-slate-700 dark:text-slate-200">Current license SKUs ({r.licenses.length})</h3>
+        <DataTable
+          columns={['SKU', 'Consumed', 'Enabled', 'Available', 'Enabled service plans']}
+          rows={r.licenses.map((l) => [l.skuPartNumber, l.consumed, l.enabled, l.available, <span className="text-xs text-slate-500">{l.plans || '—'}</span>])}
+          align={{ 1: 'right', 2: 'right', 3: 'right' }}
         />
       </Section>
 
@@ -312,7 +331,7 @@ export default function TenantDetail() {
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
           <div>
             <div className="mb-2 text-sm font-medium text-slate-700 dark:text-slate-200">Groups ({r.groups.length})</div>
-            <DataTable columns={['Group', 'Type', 'Is Team']} rows={r.groups.map((g) => [g.displayName, g.groupType, g.isTeam ? 'Yes' : 'No'])} max={300} />
+            <DataTable columns={['Group', 'Type', 'Members', 'Owners', 'Team']} rows={r.groups.map((g) => [g.displayName, g.groupType, g.members || '—', <span className="text-xs">{g.owners || '—'}</span>, g.isTeam ? 'Yes' : 'No'])} max={300} align={{ 2: 'right' }} />
           </div>
           <div>
             <div className="mb-2 text-sm font-medium text-slate-700 dark:text-slate-200">SharePoint sites ({r.sharePointSites.length})</div>
