@@ -158,7 +158,7 @@ export async function runReadOnlyDiscovery(token, log = () => {}) {
         compliance: String(d.complianceState || 'unknown'), ownership: d.managedDeviceOwnerType ?? '', manufacturer: d.manufacturer ?? '', model,
         serialNumber: serial, managementAgent: d.managementAgent ?? '', encrypted: d.isEncrypted === true,
         lastSync: String(d.lastSyncDateTime ?? '').slice(0, 10), enrolled: String(d.enrolledDateTime ?? '').slice(0, 10),
-        formFactor, typeCode, suggestedName: `<SITE>-<W>${typeCode}-${serial || '<SERIAL>'}`, source: 'Intune',
+        formFactor, typeCode, suggestedName: `<SITE>-<W>${typeCode}-${serial || '<SERIAL>'}`, source: 'Intune', isVM: /virtual|vmware|hyper-?v|cloud pc|cloudpc|azure|kvm|virtualbox|xen/i.test(`${model} ${String(d.manufacturer ?? '')}`),
       });
     }
     log(`Get-MgDeviceManagementManagedDevice -> ${dev.length}`, dev.length ? 'ok' : 'warn');
@@ -177,7 +177,7 @@ export async function runReadOnlyDiscovery(token, log = () => {}) {
         compliance: d.isCompliant === true ? 'compliant' : d.isCompliant === false ? 'noncompliant' : 'unknown', ownership: d.trustType ?? '',
         manufacturer: d.manufacturer ?? '', model, serialNumber: '', managementAgent: d.isManaged ? 'managed' : 'registered', encrypted: false,
         lastSync: String(d.approximateLastSignInDateTime ?? '').slice(0, 10), enrolled: '',
-        formFactor, typeCode, suggestedName: `<SITE>-<W>${typeCode}-<SERIAL>`, source: 'Entra',
+        formFactor, typeCode, suggestedName: `<SITE>-<W>${typeCode}-<SERIAL>`, source: 'Entra', isVM: /virtual|vmware|hyper-?v|cloud pc|cloudpc|azure|kvm|virtualbox|xen/i.test(`${model} ${String(d.manufacturer ?? '')}`),
       });
       added++;
     }

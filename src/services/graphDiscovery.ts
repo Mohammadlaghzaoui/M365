@@ -228,6 +228,7 @@ export interface DeviceRecord {
   typeCode: string;         // naming-convention device-type code (L/D/W/X/E/F/M/P/T/...)
   suggestedName: string;    // skeleton name per the workstation convention
   source: string;           // Intune | Entra
+  isVM: boolean;            // virtual machine / Cloud PC
 }
 
 /**
@@ -509,6 +510,7 @@ export async function runDiscovery(log: Logger = noop): Promise<DiscoveryResult>
         serialNumber: serial, managementAgent: String(d.managementAgent ?? ''), encrypted: d.isEncrypted === true,
         lastSync: String(d.lastSyncDateTime ?? '').slice(0, 10), enrolled: String(d.enrolledDateTime ?? '').slice(0, 10),
         formFactor, typeCode, suggestedName: `<SITE>-<W>${typeCode}-${serial || '<SERIAL>'}`, source: 'Intune',
+        isVM: /virtual|vmware|hyper-?v|cloud pc|cloudpc|azure|kvm|virtualbox|xen/i.test(`${model} ${String(d.manufacturer ?? '')}`),
       });
     }
     log(`→ ${dev.length} Intune-managed device(s)`, dev.length ? 'ok' : 'warn');
@@ -538,6 +540,7 @@ export async function runDiscovery(log: Logger = noop): Promise<DiscoveryResult>
         serialNumber: '', managementAgent: d.isManaged === true ? 'managed' : 'registered', encrypted: false,
         lastSync: String(d.approximateLastSignInDateTime ?? '').slice(0, 10), enrolled: '',
         formFactor, typeCode, suggestedName: `<SITE>-<W>${typeCode}-<SERIAL>`, source: 'Entra',
+        isVM: /virtual|vmware|hyper-?v|cloud pc|cloudpc|azure|kvm|virtualbox|xen/i.test(`${model} ${String(d.manufacturer ?? '')}`),
       });
       added++;
     }

@@ -70,11 +70,21 @@ function Section({ id, n, title, desc, children }: { id: string; n: number; titl
   );
 }
 
+function EmptyNote({ what, reason }: { what: string; reason?: string }) {
+  return (
+    <div className="rounded-md border border-dashed border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
+      <strong>No {what} returned.</strong> {reason || 'Either none exist in this tenant, or the sign-in account did not consent to the required read scope. Re-run and approve the consent if this is unexpected.'}
+    </div>
+  );
+}
+
 const SECTIONS = [
   { id: 'overview', label: 'Overview' },
   { id: 'users', label: 'Users & Licensing' },
-  { id: 'endpoints', label: 'Endpoint Plan' },
-  { id: 'inventory', label: 'Inventory' },
+  { id: 'endpoints', label: 'Endpoints & Devices' },
+  { id: 'collab', label: 'Collaboration' },
+  { id: 'security', label: 'Security' },
+  { id: 'apps', label: 'Applications' },
   { id: 'testmig', label: 'Test Migration' },
   { id: 'risks', label: 'Risks & Issues' },
   { id: 'evidence', label: 'Evidence' },
@@ -111,6 +121,8 @@ export default function TenantDetail() {
     );
   }
   const r = result;
+  const reasonFor = (re: RegExp) => r.validations.find((v) => re.test(v.workload))?.note;
+  const vmCount = (r.deviceInventory ?? []).filter((d) => d.isVM).length;
 
   // ---- Endpoint plan ----
   const endpoints = (r.deviceInventory ?? []).map((d) => {
@@ -168,8 +180,13 @@ export default function TenantDetail() {
     ['Devices (Entra)', 'GET /devices', r.deviceInventory.some((d) => d.source === 'Entra') ? <Chip label="Collected" tone="green" /> : <Chip label="None" tone="slate" />, r.deviceInventory.filter((d) => d.source === 'Entra').length],
     ['Office app usage', 'GET /reports/getM365AppUserDetail', r.appUsage?.classified ? <Chip label="Collected" tone="green" /> : <Chip label="Not available" tone="amber" />, r.appUsage?.classified ?? 0],
     ['Mailbox sizing', 'GET /reports/getMailboxUsageDetail', r.usage.available ? <Chip label="Collected" tone="green" /> : <Chip label="Not available" tone="amber" />, r.usage.mailboxCount],
-    ['SharePoint sites', 'GET /sites', <Chip label="Collected" tone="green" />, r.sharePointSites.length],
-    ['Conditional Access', 'GET /identity/conditionalAccess/policies', <Chip label="Collected" tone="green" />, r.caPolicies.length],
+    ['Teams', 'GET /groups (Team) + channels', r.teamsDetail.length ? <Chip label="Collected" tone="green" /> : <Chip label="None" tone="slate" />, r.teamsDetail.length],
+    ['SharePoint sites', 'GET /sites', r.sharePointSites.length ? <Chip label="Collected" tone="green" /> : <Chip label="None" tone="slate" />, r.sharePointSites.length],
+    ['SharePoint / OneDrive sizing', 'GET /reports/get*UsageDetail', r.usage.available ? <Chip label="Collected" tone="green" /> : <Chip label="Not available" tone="amber" />, r.usage.spoSiteCount],
+    ['Conditional Access', 'GET /identity/conditionalAccess/policies', r.caPolicies.length ? <Chip label="Collected" tone="green" /> : <Chip label="None" tone="slate" />, r.caPolicies.length],
+    ['Compliance policies', 'GET /deviceManagement/deviceCompliancePolicies', (r.compliancePolicies ?? []).length ? <Chip label="Collected" tone="green" /> : <Chip label="None" tone="slate" />, (r.compliancePolicies ?? []).length],
+    ['App registrations', 'GET /applications', r.appRegistrations.length ? <Chip label="Collected" tone="green" /> : <Chip label="None" tone="slate" />, r.appRegistrations.length],
+    ['Enterprise apps', 'GET /servicePrincipals', r.servicePrincipals.length ? <Chip label="Collected" tone="green" /> : <Chip label="None" tone="slate" />, r.servicePrincipals.length],
     ['Admin roles', 'GET /directoryRoles?$expand=members', (r.adminRoles ?? []).length ? <Chip label="Collected" tone="green" /> : <Chip label="None" tone="slate" />, (r.adminRoles ?? []).reduce((a, x) => a + x.members.length, 0)],
   ];
 
@@ -290,15 +307,26 @@ export default function TenantDetail() {
         />
       </Section>
 
-      {/* 3. Endpoint Plan */}
-      <Section id="endpoints" n={3} title="Endpoint Plan" desc="Suggested new workstation names per the naming convention.">
+      {/* 3. Endpoints & Devices */}
+      <Section id="endpoints" n={3} title="Endpoints & Devices" desc="Full device inventory with the workstation naming plan, Intune configuration and any virtual machines / Cloud PCs.">
+        <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          {[
+            { l: 'Devices', v: r.devices.total }, { l: 'Compliant', v: r.devices.compliant ?? 0 }, { l: 'Non-compliant', v: r.devices.nonCompliant ?? 0 },
+            { l: 'VMs / Cloud PCs', v: vmCount }, { l: 'Config profiles', v: r.intune?.configs ?? 0 }, { l: 'Compliance policies', v: (r.compliancePolicies ?? []).length },
+          ].map((k) => (
+            <div key={k.l} className="rounded-lg border border-slate-300 bg-slate-50 px-3 py-2.5 dark:border-slate-700 dark:bg-slate-800/40">
+              <div className="text-lg font-bold tabular-nums text-slate-900 dark:text-slate-100">{k.v}</div>
+              <div className="text-xs text-slate-500">{k.l}</div>
+            </div>
+          ))}
+        </div>
         <div className="mb-4 flex flex-wrap items-end gap-5 rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/40">
           <label className="text-sm text-slate-600 dark:text-slate-300">
             <span className="mb-1 block font-medium">Site / company code</span>
             <input value={site} onChange={(e) => { setSite(e.target.value); setSiteCode(tenantId, e.target.value); }} className="w-32 rounded border border-slate-300 bg-white px-2 py-1 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100" />
           </label>
           <div className="text-sm text-slate-500">
-            <div className="font-medium text-slate-700 dark:text-slate-200">Convention</div>
+            <div className="font-medium text-slate-700 dark:text-slate-200">Naming convention → {target}</div>
             <code className="text-xs">{NAMING_FORMAT.replace('[SITE]', site)}</code>
             <div className="mt-1 text-xs">Worker: O=Office, F=Field, T=Temp, K=Kiosk · Device: L=Laptop, D=Desktop, P=Phone, T=Tablet, M=Mac</div>
           </div>
@@ -307,41 +335,75 @@ export default function TenantDetail() {
             <div className="rounded border border-slate-200 bg-white px-3 py-1.5 dark:border-slate-700 dark:bg-slate-900"><div className="text-base font-bold text-slate-800 dark:text-slate-100">{namingErrors}</div>errors</div>
           </div>
         </div>
-        <DataTable
-          columns={['Current device name', 'Endpoint class', 'Operating system', 'Likely user', 'Suggested new name', 'Device type', 'Compliance', 'Validation / action']}
-          rows={endpoints.map((e) => [e.device, e.cls ? <Chip label={e.cls} tone={e.cls === 'PC' ? 'blue' : 'amber'} /> : '—', e.os, e.user, e.suggested ? <span className="font-mono text-[12px]">{e.suggested}</span> : '—', e.type, <Chip label={e.compliance} tone={complianceTone(e.compliance)} />, e.action])}
-        />
+        {endpoints.length ? (
+          <DataTable
+            columns={['Current device name', 'Class', 'Operating system', 'Likely user', 'Suggested new name', 'Device type', 'Compliance', 'Source', 'Action']}
+            rows={endpoints.map((e, i) => {
+              const d = (r.deviceInventory ?? [])[i];
+              return [e.device, d?.isVM ? <Chip label="VM" tone="amber" /> : e.cls ? <Chip label={e.cls} tone="blue" /> : '—', e.os, e.user, e.suggested ? <span className="font-mono text-[12px]">{e.suggested}</span> : '—', e.type, <Chip label={e.compliance} tone={complianceTone(e.compliance)} />, d?.source ?? '', e.action];
+            })}
+          />
+        ) : <EmptyNote what="managed/registered devices" reason={reasonFor(/device/i)} />}
       </Section>
 
-      {/* 4. Migration Inventory */}
-      <Section id="inventory" n={4} title="Migration Inventory" desc="What will move to the target tenant.">
+      {/* 4. Collaboration */}
+      <Section id="collab" n={4} title="Collaboration — Teams, SharePoint & OneDrive" desc="Teams, SharePoint sites and external-sharing exposure to migrate.">
         <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
           {[
-            { l: 'Mailboxes', v: `${r.usage.mailboxCount} · ${r.usage.mailboxTotalGB.toFixed(0)} GB` },
-            { l: 'OneDrive', v: `${r.usage.oneDriveCount} · ${r.usage.oneDriveTotalGB.toFixed(0)} GB` },
-            { l: 'SharePoint', v: `${r.usage.spoSiteCount} · ${r.usage.spoTotalGB.toFixed(0)} GB` },
-            { l: 'Teams', v: `${r.teams}` },
+            { l: 'Teams', v: r.teams }, { l: 'SharePoint sites', v: `${r.usage.spoSiteCount || r.sharePointSites.length} · ${r.usage.spoTotalGB.toFixed(0)} GB` },
+            { l: 'OneDrive', v: `${r.usage.oneDriveCount} · ${r.usage.oneDriveTotalGB.toFixed(0)} GB` }, { l: 'M365 groups', v: r.m365Groups },
           ].map((k) => (
             <div key={k.l} className="rounded-lg border border-slate-300 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/40">
-              <div className="text-base font-bold text-slate-900 dark:text-slate-100">{k.v}</div>
-              <div className="text-xs text-slate-500">{k.l}</div>
+              <div className="text-base font-bold text-slate-900 dark:text-slate-100">{k.v}</div><div className="text-xs text-slate-500">{k.l}</div>
             </div>
           ))}
         </div>
-        <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-          <div>
-            <div className="mb-2 text-sm font-medium text-slate-700 dark:text-slate-200">Groups ({r.groups.length})</div>
-            <DataTable columns={['Group', 'Type', 'Members', 'Owners', 'Team']} rows={r.groups.map((g) => [g.displayName, g.groupType, g.members || '—', <span className="text-xs">{g.owners || '—'}</span>, g.isTeam ? 'Yes' : 'No'])} max={300} align={{ 2: 'right' }} />
-          </div>
-          <div>
-            <div className="mb-2 text-sm font-medium text-slate-700 dark:text-slate-200">SharePoint sites ({r.sharePointSites.length})</div>
-            <DataTable columns={['Site', 'URL']} rows={r.sharePointSites.map((s) => [s.name, s.webUrl])} max={300} />
-          </div>
+        <h3 className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-200">Teams ({r.teamsDetail.length})</h3>
+        {r.teamsDetail.length ? (
+          <DataTable columns={['Team', 'Visibility', 'Owners', 'Members', 'Guests', 'Channels', 'Private/shared']} rows={r.teamsDetail.map((t) => [t.name, t.visibility, t.owners, t.members, t.guests, t.channels, t.privateChannels])} align={{ 2: 'right', 3: 'right', 4: 'right', 5: 'right', 6: 'right' }} />
+        ) : <EmptyNote what="Teams" reason={reasonFor(/team/i)} />}
+        <h3 className="mb-2 mt-6 text-sm font-semibold text-slate-700 dark:text-slate-200">SharePoint sites ({r.sharePointSites.length})</h3>
+        {r.sharePointSites.length ? (
+          <DataTable columns={['Site', 'URL', 'Created', 'Last modified']} rows={r.sharePointSites.map((s) => [s.name, s.webUrl, s.created, s.lastModified])} max={400} />
+        ) : <EmptyNote what="SharePoint sites" reason={reasonFor(/sharepoint|site/i)} />}
+        <h3 className="mb-2 mt-6 text-sm font-semibold text-slate-700 dark:text-slate-200">External sharing exposure (sampled)</h3>
+        <div className="grid grid-cols-3 gap-3 text-center">
+          <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 dark:border-rose-800 dark:bg-rose-900/20"><div className="text-xl font-bold text-rose-700 dark:text-rose-300">{r.sharing.anonymous}</div><div className="text-xs text-slate-500">"Anyone" links</div></div>
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-900/20"><div className="text-xl font-bold text-amber-700 dark:text-amber-300">{r.sharing.organization}</div><div className="text-xs text-slate-500">Org-wide links</div></div>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/40"><div className="text-xl font-bold text-slate-700 dark:text-slate-200">{r.sharing.users}</div><div className="text-xs text-slate-500">Specific people</div></div>
         </div>
       </Section>
 
-      {/* 5. Test Migration */}
-      <Section id="testmig" n={5} title="Test Migration (Pilot Batch)" desc={`A representative pilot to validate the ${r.org.displayName} → ${target} migration before full cutover. Preview only — no changes are made.`}>
+      {/* 5. Security */}
+      <Section id="security" n={5} title="Identity & Security" desc="Conditional Access, device compliance and privileged accounts to recreate in the target.">
+        <h3 className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-200">Conditional Access policies ({r.caPolicies.length})</h3>
+        {r.caPolicies.length ? (
+          <DataTable columns={['Policy', 'State']} rows={r.caPolicies.map((p) => [p.displayName, <Chip label={p.state} tone={/^enabled$/i.test(p.state) ? 'green' : /report/i.test(p.state) ? 'amber' : 'slate'} />])} />
+        ) : <EmptyNote what="Conditional Access policies" reason={reasonFor(/conditional|identity \(ca\)/i)} />}
+        <h3 className="mb-2 mt-6 text-sm font-semibold text-slate-700 dark:text-slate-200">Compliance policies ({(r.compliancePolicies ?? []).length})</h3>
+        {(r.compliancePolicies ?? []).length ? (
+          <DataTable columns={['Policy', 'Platform']} rows={(r.compliancePolicies ?? []).map((p) => [p.name, p.platform])} />
+        ) : <EmptyNote what="compliance policies" reason={reasonFor(/compliance/i)} />}
+        <h3 className="mb-2 mt-6 text-sm font-semibold text-slate-700 dark:text-slate-200">Privileged accounts ({(r.adminRoles ?? []).reduce((a, x) => a + x.members.length, 0)})</h3>
+        {(r.adminRoles ?? []).length ? (
+          <DataTable columns={['Admin role', 'Members']} rows={(r.adminRoles ?? []).map((x) => [<Chip label={x.role} tone={/global/i.test(x.role) ? 'red' : 'amber'} />, x.members.join(', ')])} />
+        ) : <EmptyNote what="admin roles" reason={reasonFor(/admin role/i)} />}
+      </Section>
+
+      {/* 6. Applications */}
+      <Section id="apps" n={6} title="Applications" desc="App registrations and enterprise apps (service principals) that may need re-consent in the target tenant.">
+        <h3 className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-200">App registrations ({r.appRegistrations.length})</h3>
+        {r.appRegistrations.length ? (
+          <DataTable columns={['Display name', 'App ID', 'Audience', 'Created']} rows={r.appRegistrations.map((a) => [a.displayName, a.appId, a.signInAudience, a.created])} max={400} />
+        ) : <EmptyNote what="app registrations" reason={reasonFor(/apps/i)} />}
+        <h3 className="mb-2 mt-6 text-sm font-semibold text-slate-700 dark:text-slate-200">Enterprise apps ({r.servicePrincipals.length})</h3>
+        {r.servicePrincipals.length ? (
+          <DataTable columns={['Display name', 'App ID', 'Type', 'Enabled']} rows={r.servicePrincipals.map((s) => [s.displayName, s.appId, s.type, s.enabled ? 'Yes' : 'No'])} max={400} />
+        ) : <EmptyNote what="enterprise apps" reason={reasonFor(/enterprise apps/i)} />}
+      </Section>
+
+      {/* 7. Test Migration */}
+      <Section id="testmig" n={7} title="Test Migration (Pilot Batch)" desc={`A representative pilot to validate the ${r.org.displayName} → ${target} migration before full cutover. Preview only — no changes are made.`}>
         <div className="mb-4 flex flex-wrap items-end gap-5 rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/40">
           <label className="text-sm text-slate-600 dark:text-slate-300">
             <span className="mb-1 block font-medium">Target domain</span>
@@ -364,8 +426,8 @@ export default function TenantDetail() {
         />
       </Section>
 
-      {/* 6. Risks & Issues */}
-      <Section id="risks" n={6} title="Risks & Issues" desc="Migration risks, blockers and privileged accounts.">
+      {/* 8. Risks & Issues */}
+      <Section id="risks" n={8} title="Risks & Issues" desc="Migration risks, blockers and anything Graph could not fully read.">
         {analysis && (
           <ul className="mb-5 space-y-1.5">
             {analysis.findings.filter((f) => f.level !== 'info').map((f, i) => (
@@ -376,14 +438,12 @@ export default function TenantDetail() {
             ))}
           </ul>
         )}
-        <h3 className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-200">Privileged accounts ({(r.adminRoles ?? []).reduce((a, x) => a + x.members.length, 0)})</h3>
-        <DataTable columns={['Admin role', 'Members']} rows={(r.adminRoles ?? []).map((x) => [<Chip label={x.role} tone={/global/i.test(x.role) ? 'red' : 'amber'} />, x.members.join(', ')])} />
-        <h3 className="mb-2 mt-6 text-sm font-semibold text-slate-700 dark:text-slate-200">Validation items ({r.validations.length})</h3>
-        <DataTable columns={['Data set', 'Status', 'Note']} rows={r.validations.map((v) => [v.workload, v.status || '—', v.note])} />
+        <h3 className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-200">Validation items ({r.validations.length})</h3>
+        {r.validations.length ? <DataTable columns={['Data set', 'Status', 'Note']} rows={r.validations.map((v) => [v.workload, v.status || '—', v.note])} /> : <p className="text-sm text-slate-400">No gaps — every workload was read successfully.</p>}
       </Section>
 
-      {/* 7. Evidence */}
-      <Section id="evidence" n={7} title="Data Sources / Evidence" desc="Every figure is collected read-only from Microsoft Graph — this is the provenance for the analysis.">
+      {/* 9. Evidence */}
+      <Section id="evidence" n={9} title="Data Sources / Evidence" desc="Every figure is collected read-only from Microsoft Graph — this is the provenance for the analysis.">
         <DataTable columns={['Data set', 'Microsoft Graph source', 'Status', 'Records']} rows={evidence} align={{ 3: 'right' }} />
       </Section>
     </div>

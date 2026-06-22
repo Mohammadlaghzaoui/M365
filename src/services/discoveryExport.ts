@@ -96,8 +96,8 @@ export function buildDiscoverySheets(result: DiscoveryResult, analysis: Assessme
     },
     {
       name: 'Device inventory',
-      columns: ['Device', 'User', 'OS', 'OS version', 'Form factor', 'Type code', 'Suggested name', 'Compliance', 'Ownership', 'Manufacturer', 'Model', 'Serial', 'Encrypted', 'Source', 'Last sync', 'Enrolled'],
-      rows: (result.deviceInventory ?? []).map((d) => [d.deviceName, d.user, d.os, d.osVersion, d.formFactor ?? '', d.typeCode ?? '', d.suggestedName ?? '', d.compliance, d.ownership, d.manufacturer, d.model, d.serialNumber, d.encrypted ? 'Yes' : 'No', d.source ?? '', d.lastSync, d.enrolled]),
+      columns: ['Device', 'User', 'OS', 'OS version', 'Form factor', 'VM', 'Type code', 'Suggested name', 'Compliance', 'Ownership', 'Manufacturer', 'Model', 'Serial', 'Encrypted', 'Source', 'Last sync', 'Enrolled'],
+      rows: (result.deviceInventory ?? []).map((d) => [d.deviceName, d.user, d.os, d.osVersion, d.formFactor ?? '', d.isVM ? 'Yes' : 'No', d.typeCode ?? '', d.suggestedName ?? '', d.compliance, d.ownership, d.manufacturer, d.model, d.serialNumber, d.encrypted ? 'Yes' : 'No', d.source ?? '', d.lastSync, d.enrolled]),
     },
     {
       name: 'Naming convention',
