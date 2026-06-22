@@ -37,7 +37,7 @@ function DataTable({ columns, rows, max = 1000, align }: { columns: string[]; ro
 
 function Section({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
   return (
-    <section id={id} className="mb-6 rounded border border-slate-300 bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
+    <section id={id} className="mb-6 scroll-mt-28 rounded border border-slate-300 bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
       <h2 className="mb-4 border-b border-slate-200 pb-2 text-base font-semibold text-slate-800 dark:border-slate-700 dark:text-slate-100">{title}</h2>
       {children}
     </section>
@@ -145,10 +145,12 @@ export default function TenantDetail() {
         </div>
       </div>
 
-      {/* Section nav */}
+      {/* Section nav — scrolls in-page (no hash navigation; this app uses HashRouter) */}
       <div className="sticky top-0 z-20 mb-5 flex flex-wrap gap-1 border-b border-slate-300 bg-slate-50 py-1 dark:border-slate-700 dark:bg-slate-900">
         {SECTIONS.map((s) => (
-          <a key={s.id} href={`#${s.id}`} className="rounded px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-200 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800">{s.label}</a>
+          <button key={s.id} type="button"
+            onClick={() => document.getElementById(s.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+            className="rounded px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-200 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800">{s.label}</button>
         ))}
       </div>
 
