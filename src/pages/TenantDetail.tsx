@@ -84,11 +84,11 @@ export default function TenantDetail() {
 
   const userRows = r.users
     .filter((u) => !uq || `${u.displayName} ${u.userPrincipalName} ${u.department} ${u.userCategory}`.toLowerCase().includes(uq.toLowerCase()))
-    .map((u) => [u.displayName, u.userPrincipalName, u.userType, u.accountEnabled ? 'Yes' : 'No', u.department, u.licenses, u.userCategory ?? '', u.appPlatforms ?? '', u.lastOfficeActivity ?? '', u.deviceCount ?? 0, u.lastSignIn] as Cell[]);
+    .map((u) => [u.displayName, u.userPrincipalName, u.userType, u.accountEnabled ? 'Yes' : 'No', u.department, u.licenses, u.workerType ?? '', u.userCategory ?? '', u.appPlatforms ?? '', u.lastOfficeActivity ?? '', u.deviceCount ?? 0, u.lastSignIn] as Cell[]);
 
   const deviceRows = (r.deviceInventory ?? [])
     .filter((d) => !dq || `${d.deviceName} ${d.user} ${d.os} ${d.model} ${d.suggestedName}`.toLowerCase().includes(dq.toLowerCase()))
-    .map((d) => [d.deviceName, d.user, d.os, d.osVersion, d.formFactor ?? '', d.typeCode ?? '', d.suggestedName ?? '', d.compliance, d.ownership, d.model, d.serialNumber, d.encrypted ? 'Yes' : 'No', d.lastSync] as Cell[]);
+    .map((d) => [d.deviceName, d.user, d.os, d.osVersion, d.formFactor ?? '', d.typeCode ?? '', d.suggestedName ?? '', d.compliance, d.ownership, d.model, d.serialNumber, d.source ?? '', d.lastSync] as Cell[]);
 
   const findingColor: Record<string, string> = { info: 'blue', warn: 'amber', risk: 'orange', blocker: 'red' };
 
@@ -153,14 +153,14 @@ export default function TenantDetail() {
 
           <div className="mb-5 grid grid-cols-1 gap-5 lg:grid-cols-3">
             <Card className="p-5">
-              <div className="mb-1 flex items-center gap-2 text-slate-400"><Monitor size={16} className="text-cyan-500" /><span className="text-xs">Office desktop-app users</span></div>
-              <div className="text-3xl font-bold text-slate-800 dark:text-slate-100">{r.appUsage?.desktopApp ?? 0}</div>
-              <div className="text-xs text-slate-400">log in with the Office app on laptop/desktop</div>
+              <div className="mb-1 flex items-center gap-2 text-slate-400"><Monitor size={16} className="text-cyan-500" /><span className="text-xs">Office workers</span></div>
+              <div className="text-3xl font-bold text-slate-800 dark:text-slate-100">{r.appUsage?.office ?? 0}</div>
+              <div className="text-xs text-slate-400">desktop/laptop — sign in with the Office app ({r.appUsage?.desktopApp ?? 0} confirmed by usage)</div>
             </Card>
             <Card className="p-5">
-              <div className="mb-1 flex items-center gap-2 text-slate-400"><Smartphone size={16} className="text-violet-500" /><span className="text-xs">Mobile-only users</span></div>
-              <div className="text-3xl font-bold text-slate-800 dark:text-slate-100">{r.appUsage?.mobileOnly ?? 0}</div>
-              <div className="text-xs text-slate-400">use Microsoft 365 only on mobile</div>
+              <div className="mb-1 flex items-center gap-2 text-slate-400"><Smartphone size={16} className="text-violet-500" /><span className="text-xs">Field workers</span></div>
+              <div className="text-3xl font-bold text-slate-800 dark:text-slate-100">{r.appUsage?.field ?? 0}</div>
+              <div className="text-xs text-slate-400">mobile-only — use Microsoft 365 only on a phone/tablet</div>
             </Card>
             <Card className="p-5">
               <div className="mb-1 flex items-center gap-2 text-slate-400">{(r.devices.nonCompliant ?? 0) > 0 ? <ShieldAlert size={16} className="text-rose-500" /> : <ShieldCheck size={16} className="text-emerald-500" />}<span className="text-xs">Device compliance</span></div>
@@ -197,7 +197,7 @@ export default function TenantDetail() {
             <Search size={15} className="text-slate-400" />
             <input value={uq} onChange={(e) => setUq(e.target.value)} placeholder="Search users, department, category…" className="w-full bg-transparent text-sm outline-none" />
           </div>
-          <DataTable columns={['Display name', 'UPN', 'Type', 'Enabled', 'Department', 'Licenses', 'Category', 'App platforms', 'Last Office', 'Devices', 'Last sign-in']} rows={userRows} />
+          <DataTable columns={['Display name', 'UPN', 'Type', 'Enabled', 'Department', 'Licenses', 'Worker type', 'Category', 'App platforms', 'Last Office', 'Devices', 'Last sign-in']} rows={userRows} />
         </Panel>
       )}
 
@@ -224,7 +224,7 @@ export default function TenantDetail() {
               <Search size={15} className="text-slate-400" />
               <input value={dq} onChange={(e) => setDq(e.target.value)} placeholder="Search device, user, model…" className="w-full bg-transparent text-sm outline-none" />
             </div>
-            <DataTable columns={['Device', 'User', 'OS', 'Version', 'Form factor', 'Code', 'Suggested name', 'Compliance', 'Ownership', 'Model', 'Serial', 'Encrypted', 'Last sync']} rows={deviceRows} />
+            <DataTable columns={['Device', 'User', 'OS', 'Version', 'Form factor', 'Code', 'Suggested name', 'Compliance', 'Ownership', 'Model', 'Serial', 'Source', 'Last sync']} rows={deviceRows} />
           </Panel>
           <Panel title="Workstation naming convention" sub="From your Workstation Naming sheet — format: <SITE><n>-<WorkerType><DeviceType>-<Serial> (e.g. AHA1-OW-BC349BC34).">
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">

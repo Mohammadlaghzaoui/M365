@@ -128,8 +128,9 @@ export interface DiscoveryUser {
   // M365 Apps usage (who logs in with the desktop app vs mobile only)
   appPlatforms: string;     // e.g. "Windows, Mobile"
   userCategory: string;     // "Office (desktop app)" | "Mobile only" | "Web only" | "No Office activity"
+  workerType: string;       // "Office" (desktop/laptop) | "Field" (mobile-only) | "" (unknown)
   lastOfficeActivity: string;
-  deviceCount: number;      // Intune managed devices owned by this user
+  deviceCount: number;      // managed/registered devices owned by this user
   deviceTypes: string;      // e.g. "Windows, iOS"
 }
 
@@ -205,6 +206,7 @@ export interface DeviceRecord {
   formFactor: string;       // Desktop | Laptop | Phone | Tablet | Server | Other
   typeCode: string;         // naming-convention device-type code (L/D/W/X/E/F/M/P/T/...)
   suggestedName: string;    // skeleton name per the workstation convention
+  source: string;           // Intune | Entra
 }
 
 /**
@@ -243,7 +245,7 @@ export interface DiscoveryResult {
   domains: DiscoveryDomain[];
   devices: { total: number; byOs: Record<string, number>; compliant: number; nonCompliant: number; byCompliance: Record<string, number> };
   deviceInventory: DeviceRecord[];
-  appUsage: { desktopApp: number; mobileOnly: number; webOnly: number; noActivity: number; classified: number };
+  appUsage: { desktopApp: number; mobileOnly: number; webOnly: number; noActivity: number; classified: number; office: number; field: number };
   usage: UsageStats;
   // Extended assessment workloads
   sharePointSites: { id: string; name: string; webUrl: string; created: string; lastModified: string }[];
@@ -389,7 +391,7 @@ export async function runDiscovery(log: Logger = noop): Promise<DiscoveryResult>
     licenses: ((u.assignedLicenses as { skuId: string }[]) ?? []).map((l) => skuName(l.skuId, skus)).join(', '),
     createdDateTime: String(u.createdDateTime ?? '').slice(0, 10),
     lastSignIn: String((u.signInActivity as { lastSignInDateTime?: string })?.lastSignInDateTime ?? '').slice(0, 10),
-    appPlatforms: '', userCategory: '', lastOfficeActivity: '', deviceCount: 0, deviceTypes: '',
+    appPlatforms: '', userCategory: '', workerType: '', lastOfficeActivity: '', deviceCount: 0, deviceTypes: '',
   }));
   const guests = users.filter((u) => u.userType === 'Guest').length;
   const disabled = users.filter((u) => !u.accountEnabled).length;
@@ -418,48 +420,76 @@ export async function runDiscovery(log: Logger = noop): Promise<DiscoveryResult>
   const distributionGroups = groups.filter((g) => g.groupType === 'Distribution').length;
   log(`→ ${groups.length} group(s): ${m365Groups} M365, ${teams} Teams, ${securityGroups} security, ${distributionGroups} distribution`, 'ok');
 
-  log('Get-MgDeviceManagementManagedDevice -All -Property deviceName,os,compliance,user,model …', 'cmd');
+  // Devices come from TWO sources so nothing is missed:
+  //  1. Intune managed devices (rich: serial, compliance, encryption) — needs Intune.
+  //  2. Entra registered/joined devices (/devices) — works with Directory.Read.All,
+  //     so even tenants without Intune still get a full device inventory.
   let devices = { total: 0, byOs: {} as Record<string, number>, compliant: 0, nonCompliant: 0, byCompliance: {} as Record<string, number> };
   let deviceInventory: DeviceRecord[] = [];
+  const deviceErrors: string[] = [];
+
+  log('Get-MgDeviceManagementManagedDevice -All  (Intune)', 'cmd');
   try {
-    const dev = await getAll<Record<string, unknown>>('/deviceManagement/managedDevices?$select=deviceName,operatingSystem,osVersion,complianceState,managedDeviceOwnerType,manufacturer,model,userPrincipalName,emailAddress,lastSyncDateTime,enrolledDateTime,serialNumber,managementAgent,isEncrypted,azureADRegistered&$top=999', 20000);
-    const byOs: Record<string, number> = {};
-    const byCompliance: Record<string, number> = {};
-    deviceInventory = dev.map((d) => {
+    const dev = await getAll<Record<string, unknown>>('/deviceManagement/managedDevices?$select=deviceName,operatingSystem,osVersion,complianceState,managedDeviceOwnerType,manufacturer,model,userPrincipalName,emailAddress,lastSyncDateTime,enrolledDateTime,serialNumber,managementAgent,isEncrypted&$top=999', 20000);
+    for (const d of dev) {
       const os = String(d.operatingSystem || 'Unknown');
-      byOs[os] = (byOs[os] ?? 0) + 1;
-      const comp = String(d.complianceState || 'unknown');
-      byCompliance[comp] = (byCompliance[comp] ?? 0) + 1;
       const model = String(d.model ?? '');
       const serial = String(d.serialNumber ?? '');
       const { formFactor, typeCode } = classifyDevice(os, model);
-      return {
-        deviceName: String(d.deviceName ?? ''),
-        user: String(d.userPrincipalName ?? d.emailAddress ?? ''),
-        os,
-        osVersion: String(d.osVersion ?? ''),
-        compliance: comp,
-        ownership: String(d.managedDeviceOwnerType ?? ''),
-        manufacturer: String(d.manufacturer ?? ''),
-        model,
-        serialNumber: serial,
-        managementAgent: String(d.managementAgent ?? ''),
-        encrypted: d.isEncrypted === true,
-        lastSync: String(d.lastSyncDateTime ?? '').slice(0, 10),
-        enrolled: String(d.enrolledDateTime ?? '').slice(0, 10),
-        formFactor,
-        typeCode,
-        // Skeleton per the workstation convention; engineer fills site + worker type.
-        suggestedName: `<SITE>-<W>${typeCode}-${serial || '<SERIAL>'}`,
-      };
-    });
+      deviceInventory.push({
+        deviceName: String(d.deviceName ?? ''), user: String(d.userPrincipalName ?? d.emailAddress ?? ''),
+        os, osVersion: String(d.osVersion ?? ''), compliance: String(d.complianceState || 'unknown'),
+        ownership: String(d.managedDeviceOwnerType ?? ''), manufacturer: String(d.manufacturer ?? ''), model,
+        serialNumber: serial, managementAgent: String(d.managementAgent ?? ''), encrypted: d.isEncrypted === true,
+        lastSync: String(d.lastSyncDateTime ?? '').slice(0, 10), enrolled: String(d.enrolledDateTime ?? '').slice(0, 10),
+        formFactor, typeCode, suggestedName: `<SITE>-<W>${typeCode}-${serial || '<SERIAL>'}`, source: 'Intune',
+      });
+    }
+    log(`→ ${dev.length} Intune-managed device(s)`, dev.length ? 'ok' : 'warn');
+  } catch (e) {
+    const status = e instanceof GraphError ? e.status : 0;
+    deviceErrors.push(`Intune devices ${status || ''}: ${e instanceof Error ? e.message : e}`.trim());
+    log(`→ Intune device read failed (${status || 'error'}) — will try Entra devices`, 'warn');
+  }
+
+  log('Get-MgDevice -All  (Entra registered/joined)', 'cmd');
+  try {
+    const seen = new Set(deviceInventory.map((d) => d.deviceName.toLowerCase()));
+    const ed = await getAll<Record<string, unknown>>('/devices?$select=displayName,operatingSystem,operatingSystemVersion,trustType,isCompliant,isManaged,manufacturer,model,approximateLastSignInDateTime,accountEnabled&$expand=registeredOwners($select=userPrincipalName,displayName)&$top=999', 20000);
+    let added = 0;
+    for (const d of ed) {
+      const name = String(d.displayName ?? '');
+      if (seen.has(name.toLowerCase())) continue; // already have richer Intune record
+      const os = String(d.operatingSystem || 'Unknown');
+      const model = String(d.model ?? '');
+      const { formFactor, typeCode } = classifyDevice(os, model);
+      const owners = (d.registeredOwners as { userPrincipalName?: string }[]) ?? [];
+      const comp = d.isCompliant === true ? 'compliant' : d.isCompliant === false ? 'noncompliant' : 'unknown';
+      deviceInventory.push({
+        deviceName: name, user: String(owners[0]?.userPrincipalName ?? ''),
+        os, osVersion: String(d.operatingSystemVersion ?? ''), compliance: comp,
+        ownership: String(d.trustType ?? ''), manufacturer: String(d.manufacturer ?? ''), model,
+        serialNumber: '', managementAgent: d.isManaged === true ? 'managed' : 'registered', encrypted: false,
+        lastSync: String(d.approximateLastSignInDateTime ?? '').slice(0, 10), enrolled: '',
+        formFactor, typeCode, suggestedName: `<SITE>-<W>${typeCode}-<SERIAL>`, source: 'Entra',
+      });
+      added++;
+    }
+    log(`→ ${added} additional Entra device(s)`, 'ok');
+  } catch (e) {
+    const status = e instanceof GraphError ? e.status : 0;
+    deviceErrors.push(`Entra devices ${status || ''}: ${e instanceof Error ? e.message : e}`.trim());
+    log(`→ Entra device read failed (${status || 'error'})`, 'warn');
+  }
+
+  // Aggregate counts over the merged inventory.
+  {
+    const byOs: Record<string, number> = {};
+    const byCompliance: Record<string, number> = {};
+    for (const d of deviceInventory) { byOs[d.os] = (byOs[d.os] ?? 0) + 1; byCompliance[d.compliance] = (byCompliance[d.compliance] ?? 0) + 1; }
     const compliant = byCompliance['compliant'] ?? 0;
-    const nonCompliant = dev.length - compliant;
-    devices = { total: dev.length, byOs, compliant, nonCompliant, byCompliance };
-    log(`→ ${dev.length} managed device(s): ${Object.entries(byOs).map(([o, n]) => `${o} ${n}`).join(', ') || 'none'}`, 'ok');
-    log(`   compliance: ${compliant} compliant, ${nonCompliant} non-compliant/other`, 'info');
-  } catch {
-    log('→ device read skipped (no Intune scope/licence)', 'warn');
+    devices = { total: deviceInventory.length, byOs, compliant, nonCompliant: deviceInventory.length - compliant, byCompliance };
+    log(`→ ${deviceInventory.length} device(s) total: ${Object.entries(byOs).map(([o, n]) => `${o} ${n}`).join(', ') || 'none'} (${compliant} compliant)`, deviceInventory.length ? 'ok' : 'warn');
   }
 
   // ---- Who logs in with the Office desktop app vs mobile only ----
@@ -490,7 +520,7 @@ export async function runDiscovery(log: Logger = noop): Promise<DiscoveryResult>
       if (web) platforms.push('Web');
       map.set(upn, { platforms, desktop, mobile, web, last: actKey ? (r[actKey] || '') : '' });
     }
-    // Per-user Intune device types/count from the inventory.
+    // Per-user device types/count from the merged inventory.
     const devByUser = new Map<string, Set<string>>();
     for (const d of deviceInventory) {
       const u = d.user.toLowerCase();
@@ -498,11 +528,15 @@ export async function runDiscovery(log: Logger = noop): Promise<DiscoveryResult>
       if (!devByUser.has(u)) devByUser.set(u, new Set());
       devByUser.get(u)!.add(d.os);
     }
+    const isDesktopOs = (s: string) => /windows|mac/i.test(s);
+    const isMobileOs = (s: string) => /ios|ipados|android/i.test(s);
     for (const u of users) {
       const key = u.userPrincipalName.toLowerCase();
       const a = map.get(key);
       const dt = devByUser.get(key);
-      if (dt) { u.deviceCount = [...deviceInventory].filter((d) => d.user.toLowerCase() === key).length; u.deviceTypes = [...dt].join(', '); }
+      const hasDesktopDev = dt ? [...dt].some(isDesktopOs) : false;
+      const hasMobileDev = dt ? [...dt].some(isMobileOs) : false;
+      if (dt) { u.deviceCount = deviceInventory.filter((d) => d.user.toLowerCase() === key).length; u.deviceTypes = [...dt].join(', '); }
       if (a) {
         u.appPlatforms = a.platforms.join(', ');
         u.lastOfficeActivity = String(a.last).slice(0, 10);
@@ -511,10 +545,19 @@ export async function runDiscovery(log: Logger = noop): Promise<DiscoveryResult>
       } else {
         u.userCategory = u.deviceTypes ? 'Has device, no Office activity' : 'No Office activity';
       }
+      // Worker type per the naming convention: Office = desktop/laptop, Field = mobile-only.
+      u.workerType = (a?.desktop || hasDesktopDev) ? 'Office' : (a?.mobile || hasMobileDev) ? 'Field' : '';
     }
-    const deskCount = users.filter((u) => u.userCategory === 'Office (desktop app)').length;
-    const mobCount = users.filter((u) => u.userCategory === 'Mobile only').length;
-    log(`→ M365 Apps usage classified ${officeClassified} user(s): ${deskCount} desktop-app, ${mobCount} mobile-only`, 'ok');
+    // Now that worker types are known, fill the worker-type code into each device's suggested name.
+    const workerByUser = new Map(users.map((u) => [u.userPrincipalName.toLowerCase(), u.workerType] as const));
+    for (const d of deviceInventory) {
+      const wt = workerByUser.get(d.user.toLowerCase());
+      const wcode = wt === 'Office' ? 'O' : wt === 'Field' ? 'F' : '<W>';
+      d.suggestedName = d.suggestedName.replace('<W>', wcode);
+    }
+    const deskCount = users.filter((u) => u.workerType === 'Office').length;
+    const fieldCount = users.filter((u) => u.workerType === 'Field').length;
+    log(`→ M365 Apps usage classified ${officeClassified} user(s): ${deskCount} office, ${fieldCount} field`, 'ok');
   } catch (e) {
     log(`→ M365 Apps usage report unavailable: ${e instanceof Error ? e.message : e}`, 'warn');
   }
@@ -524,6 +567,7 @@ export async function runDiscovery(log: Logger = noop): Promise<DiscoveryResult>
   // ---- Extended workloads (each resilient: 403/404 → validation item) ----
   const validations: ValidationItem[] = [];
   if (signInBlocked) validations.push({ workload: 'Users (sign-in activity)', object: 'signInActivity', status: 403, note: 'Last sign-in dates require AuditLog.Read.All consent; all other user attributes were collected.' });
+  if (deviceInventory.length === 0 && deviceErrors.length) validations.push({ workload: 'Devices', object: 'managedDevices / devices', status: 403, note: `No devices returned. ${deviceErrors.join(' | ')}. Sign in with an admin who can consent to Intune (DeviceManagementManagedDevices.Read.All) or Directory.Read.All.` });
   const workloads: WorkloadReadiness[] = [];
   const collect = async <T>(workload: string, cmd: string, fn: () => Promise<T[]>, okNote: (n: number) => string): Promise<T[]> => {
     log(cmd, 'cmd');
@@ -700,6 +744,8 @@ export async function runDiscovery(log: Logger = noop): Promise<DiscoveryResult>
       webOnly: users.filter((u) => u.userCategory === 'Web only').length,
       noActivity: users.filter((u) => u.userCategory.includes('No Office activity')).length,
       classified: users.filter((u) => u.appPlatforms).length,
+      office: users.filter((u) => u.workerType === 'Office').length,
+      field: users.filter((u) => u.workerType === 'Field').length,
     },
     usage,
     sharePointSites, teamsDetail, siteDrives, sharing, oneDriveSample,

@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Radar, ShieldCheck, Loader2, FileSpreadsheet, RefreshCw, Building2, Users2, Boxes, Globe, Sparkles, Gauge, ListChecks, HardDrive, Trash2 } from 'lucide-react';
+import { Radar, ShieldCheck, Loader2, FileSpreadsheet, RefreshCw, Building2, Users2, Boxes, Globe, Sparkles, Gauge, ListChecks, HardDrive, Trash2, Layers } from 'lucide-react';
 import { Badge, Button, Card, CopyButton, PageHeader, Section } from '../components/ui';
 import { DonutChart, HBarChart } from '../components/charts';
 import { runDiscovery, DiscoveryResult, DISCOVERY_SCOPES, LogLevel, useDiscoveryToken } from '../services/graphDiscovery';
 import { connectTenant, connectedTenant, disconnectTenant, getDiscoveryToken, discoveryAuthConfigured, getDiscoveryAuth, saveDiscoveryAuth } from '../services/discoveryAuth';
-import { saveTenantResult, loadTenantResult, tenantIndex, removeTenantResult, recordExportAudit } from '../services/tenantStore';
+import { saveTenantResult, tenantIndex, removeTenantResult } from '../services/tenantStore';
 import { cloudAgentConfigured } from '../services/cloudDiscovery';
 import { requestDeviceCode, pollForToken, getOnecomToken, clearOnecomToken, DeviceCode } from '../services/onecomDeviceAuth';
 import { getSession } from '../services/auth';
@@ -324,20 +324,16 @@ export default function Discovery() {
         </Card>
       )}
 
-      {/* Per-tenant stored assessments */}
+      {/* Previously assessed tenants live in the Tenant Portfolio, not here. */}
       {tenants.length > 0 && (
         <Card className="mb-5 p-4">
-          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Stored tenant assessments (separated per tenant)</div>
-          <div className="flex flex-wrap gap-2">
-            {tenants.map((t) => (
-              <span key={t.tenantId} className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs ${result?.org.tenantId === t.tenantId ? 'border-blue-400 bg-blue-50 dark:bg-blue-900/20' : 'border-slate-200 dark:border-slate-700'}`}>
-                <button onClick={() => { const r = loadTenantResult(t.tenantId); if (r) { setResult(r); save('discovery-result', r); } }} className="font-medium text-slate-700 dark:text-slate-200 hover:text-blue-500">
-                  {t.displayName}
-                </button>
-                <span className="text-slate-400">{t.users}u · {new Date(t.fetchedAt).toLocaleDateString()}</span>
-                <button onClick={() => { removeTenantResult(t.tenantId); setTenants(tenantIndex()); }} className="text-slate-400 hover:text-red-500">×</button>
-              </span>
-            ))}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-sm text-slate-500 dark:text-slate-400">
+              You have <strong className="text-slate-700 dark:text-slate-200">{tenants.length}</strong> assessed tenant{tenants.length > 1 ? 's' : ''}. They live in your Tenant Portfolio.
+            </span>
+            <Link to="/tenants" className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-blue-700">
+              <Layers size={15} /> Open Tenant Portfolio
+            </Link>
           </div>
         </Card>
       )}

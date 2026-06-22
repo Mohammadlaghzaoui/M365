@@ -30,6 +30,8 @@ export function buildDiscoverySheets(result: DiscoveryResult, analysis: Assessme
         ['Licensed seats consumed', result.licenses.reduce((a, l) => a + l.consumed, 0)],
         ['SharePoint sites', result.sharePointSites.length],
         ['Total data (GB)', Math.round(result.usage.mailboxTotalGB + result.usage.oneDriveTotalGB + result.usage.spoTotalGB)],
+        ['Office workers (desktop/laptop)', result.appUsage?.office ?? 0],
+        ['Field workers (mobile-only)', result.appUsage?.field ?? 0],
         ['Office desktop-app users', result.appUsage?.desktopApp ?? 0],
         ['Mobile-only users', result.appUsage?.mobileOnly ?? 0],
         ['Web-only users', result.appUsage?.webOnly ?? 0],
@@ -39,13 +41,13 @@ export function buildDiscoverySheets(result: DiscoveryResult, analysis: Assessme
     },
     {
       name: 'Users',
-      columns: ['Display name', 'UPN', 'Mail', 'Type', 'Enabled', 'Department', 'Job title', 'Usage location', 'Licenses', 'User category', 'App platforms', 'Last Office activity', 'Devices', 'Device types', 'Created', 'Last sign-in'],
-      rows: result.users.map((u) => [u.displayName, u.userPrincipalName, u.mail, u.userType, u.accountEnabled ? 'Yes' : 'No', u.department, u.jobTitle, u.usageLocation, u.licenses, u.userCategory ?? '', u.appPlatforms ?? '', u.lastOfficeActivity ?? '', u.deviceCount ?? 0, u.deviceTypes ?? '', u.createdDateTime, u.lastSignIn]),
+      columns: ['Display name', 'UPN', 'Mail', 'Type', 'Enabled', 'Department', 'Job title', 'Usage location', 'Licenses', 'Worker type', 'User category', 'App platforms', 'Last Office activity', 'Devices', 'Device types', 'Created', 'Last sign-in'],
+      rows: result.users.map((u) => [u.displayName, u.userPrincipalName, u.mail, u.userType, u.accountEnabled ? 'Yes' : 'No', u.department, u.jobTitle, u.usageLocation, u.licenses, u.workerType ?? '', u.userCategory ?? '', u.appPlatforms ?? '', u.lastOfficeActivity ?? '', u.deviceCount ?? 0, u.deviceTypes ?? '', u.createdDateTime, u.lastSignIn]),
     },
     {
-      name: 'Office vs mobile users',
-      columns: ['UPN', 'Display name', 'Category', 'App platforms', 'Last Office activity', 'Licenses', 'Devices', 'Device types'],
-      rows: result.users.filter((u) => u.accountEnabled && u.userType !== 'Guest').map((u) => [u.userPrincipalName, u.displayName, u.userCategory ?? '', u.appPlatforms ?? '', u.lastOfficeActivity ?? '', u.licenses, u.deviceCount ?? 0, u.deviceTypes ?? '']),
+      name: 'Office vs Field users',
+      columns: ['UPN', 'Display name', 'Worker type', 'Category', 'App platforms', 'Last Office activity', 'Licenses', 'Devices', 'Device types'],
+      rows: result.users.filter((u) => u.accountEnabled && u.userType !== 'Guest').map((u) => [u.userPrincipalName, u.displayName, u.workerType ?? '', u.userCategory ?? '', u.appPlatforms ?? '', u.lastOfficeActivity ?? '', u.licenses, u.deviceCount ?? 0, u.deviceTypes ?? '']),
     },
     {
       name: 'Groups',
@@ -69,8 +71,8 @@ export function buildDiscoverySheets(result: DiscoveryResult, analysis: Assessme
     },
     {
       name: 'Device inventory',
-      columns: ['Device', 'User', 'OS', 'OS version', 'Form factor', 'Type code', 'Suggested name', 'Compliance', 'Ownership', 'Manufacturer', 'Model', 'Serial', 'Encrypted', 'Last sync', 'Enrolled'],
-      rows: (result.deviceInventory ?? []).map((d) => [d.deviceName, d.user, d.os, d.osVersion, d.formFactor ?? '', d.typeCode ?? '', d.suggestedName ?? '', d.compliance, d.ownership, d.manufacturer, d.model, d.serialNumber, d.encrypted ? 'Yes' : 'No', d.lastSync, d.enrolled]),
+      columns: ['Device', 'User', 'OS', 'OS version', 'Form factor', 'Type code', 'Suggested name', 'Compliance', 'Ownership', 'Manufacturer', 'Model', 'Serial', 'Encrypted', 'Source', 'Last sync', 'Enrolled'],
+      rows: (result.deviceInventory ?? []).map((d) => [d.deviceName, d.user, d.os, d.osVersion, d.formFactor ?? '', d.typeCode ?? '', d.suggestedName ?? '', d.compliance, d.ownership, d.manufacturer, d.model, d.serialNumber, d.encrypted ? 'Yes' : 'No', d.source ?? '', d.lastSync, d.enrolled]),
     },
     {
       name: 'Naming convention',
