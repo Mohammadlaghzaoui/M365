@@ -9,7 +9,7 @@ import { load, save } from '../store/useLocalStorage';
 import { getBranding, getHiddenModules } from '../store/settings';
 import { Session, logout } from '../services/auth';
 import { getRole, roleLabel } from '../services/rbac';
-import { UserCircle2, LogOut, MonitorPlay, ChevronsLeft, ChevronsRight, Cpu, TriangleAlert, Wrench, Radar, Layers } from "lucide-react";
+import { UserCircle2, LogOut, MonitorPlay, ChevronsLeft, ChevronsRight, Cpu, TriangleAlert, Wrench, Layers } from "lucide-react";
 import { LogoFull, LogoMark } from './Logo';
 
 export const NAV = [
@@ -20,7 +20,6 @@ export const NAV = [
   { to: '/sharepoint', label: 'SharePoint Online', icon: Boxes, group: 'Helpdesk' },
   { to: '/teams', label: 'Microsoft Teams', icon: Users, group: 'Helpdesk' },
   { to: '/tenants', label: 'Source Tenant', icon: Layers, group: 'Migration' },
-  { to: '/discovery', label: 'Migration Discovery', icon: Radar, group: 'Migration' },
   { to: '/migration', label: 'Migration Projects', icon: FolderKanban, group: 'Migration' },
   { to: '/migration-console', label: 'Migration Console', icon: MonitorPlay, group: 'Migration' },
   { to: '/gpo-advisor', label: 'GPO → Intune Advisor', icon: FileText, group: 'Migration' },

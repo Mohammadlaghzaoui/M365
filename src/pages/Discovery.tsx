@@ -16,7 +16,7 @@ import { getSSOSettings, aiEnabled } from '../store/settings';
 import { load, save } from '../store/useLocalStorage';
 import { chat } from '../services/ai';
 import { analyzeTemplate, fillAndDownload, TemplateAnalysis, TEMPLATE_DATASETS } from '../services/templateFill';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 export default function Discovery() {
   const [result, setResult] = useState<DiscoveryResult | null>(() => load<DiscoveryResult | null>('discovery-result', null));
@@ -35,6 +35,7 @@ export default function Discovery() {
   const [connecting, setConnecting] = useState(false);
   const authReady = discoveryAuthConfigured();
   const cloudReady = cloudAgentConfigured();
+  const nav = useNavigate();
 
   // ----- Zero-setup device-code flow via the one.com PHP broker (no agent, no app reg) -----
   const [code, setCode] = useState<DeviceCode | null>(null);
@@ -57,6 +58,8 @@ export default function Discovery() {
       save('discovery-result', r);
       saveTenantResult(r);
       setTenants(tenantIndex());
+      addLine('Opening the Source Tenant dashboard …', 'ok');
+      nav(`/tenants/${r.org.tenantId}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       addLine(`ERROR: ${e instanceof Error ? e.message : e}`, 'err');
@@ -148,6 +151,7 @@ export default function Discovery() {
       save('discovery-result', r);
       saveTenantResult(r); // per-tenant separated storage
       setTenants(tenantIndex());
+      nav(`/tenants/${r.org.tenantId}`);
     } catch (e) {
       addLine(`ERROR: ${e instanceof Error ? e.message : e}`, 'err');
       setError(e instanceof Error ? e.message : String(e));
@@ -179,7 +183,8 @@ export default function Discovery() {
 
   return (
     <div>
-      <PageHeader title="Migration Discovery & Analysis" subtitle="Pull your whole tenant via Microsoft Graph — strictly read-only — and turn it into a migration analysis and an Excel discovery workbook." icon={<Radar size={20} />} />
+      <Link to="/tenants" className="mb-3 inline-flex items-center gap-1 text-sm text-slate-500 hover:text-blue-700"><Layers size={14} /> Source Tenants</Link>
+      <PageHeader title="Connect a Source Tenant" subtitle="Sign in to a customer (source) tenant with a code, pull everything via Microsoft Graph — strictly read-only — and open its Source Tenant dashboard." icon={<Radar size={20} />} />
 
       <Card className="mb-5 p-4 border-emerald-200 dark:border-emerald-800">
         <div className="flex items-start gap-2 text-sm text-emerald-700 dark:text-emerald-300">

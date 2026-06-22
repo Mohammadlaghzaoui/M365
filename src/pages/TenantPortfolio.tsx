@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Layers, Building2, Users2, HardDrive, Smartphone, Monitor, Trash2, ArrowRight, RefreshCw, Plus, Radar, ShieldCheck, Server } from 'lucide-react';
+import { Layers, Building2, Users2, HardDrive, Smartphone, Monitor, Trash2, ArrowRight, RefreshCw, Plus, ShieldCheck, Server } from 'lucide-react';
 import { Badge, Button, Card, PageHeader, ProgressBar } from '../components/ui';
 import { tenantIndex, removeTenantResult, loadTenantResult, TenantIndexEntry } from '../services/tenantStore';
 import { save } from '../store/useLocalStorage';
@@ -72,10 +72,10 @@ export default function TenantPortfolio() {
 
       {tenants.length === 0 ? (
         <Card className="p-10 text-center">
-          <Radar size={40} className="mx-auto mb-3 text-slate-300 dark:text-slate-600" />
-          <p className="mb-1 font-semibold text-slate-700 dark:text-slate-200">No tenants connected yet</p>
-          <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">Connect a customer tenant with a code — it stays here with its progress until you remove it.</p>
-          <Button onClick={() => nav('/discovery')}><Radar size={15} /> Go to Migration Discovery</Button>
+          <Layers size={40} className="mx-auto mb-3 text-slate-300 dark:text-slate-600" />
+          <p className="mb-1 font-semibold text-slate-700 dark:text-slate-200">No source tenants yet</p>
+          <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">Connect a customer's source tenant with a code — discovery runs here and the tenant stays in this list until you remove it.</p>
+          <Button onClick={() => nav('/discovery')}><Plus size={15} /> Connect a source tenant</Button>
         </Card>
       ) : (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
