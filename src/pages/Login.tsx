@@ -75,17 +75,17 @@ export default function Login({ onLogin }: { onLogin: (s: Session) => void }) {
       {/* Left brand panel */}
       <div className="relative hidden flex-1 flex-col justify-between overflow-hidden bg-gradient-to-br from-blue-700 via-blue-900 to-slate-950 p-12 lg:flex">
         <div className="absolute -right-32 -top-32 h-96 w-96 rounded-full bg-blue-500/20 blur-3xl" />
-        <div className="absolute -bottom-40 -left-20 h-96 w-96 rounded-full bg-violet-500/20 blur-3xl" />
+        <div className="absolute -bottom-40 -left-20 h-96 w-96 rounded-full bg-blue-500/20 blur-3xl" />
         <div className="relative"><LogoFull height={40} light /></div>
         <div className="relative max-w-md">
-          <h1 className="text-4xl font-bold leading-tight text-white">Run your Microsoft 365 practice from one cockpit.</h1>
-          <p className="mt-4 text-blue-200">Guided troubleshooting, migrations with test-mode validation, user provisioning, security hardening and AI assistance.</p>
+          <h1 className="text-4xl font-bold leading-tight text-white">The Microsoft 365 tenant-to-tenant migration assessment platform.</h1>
+          <p className="mt-4 text-blue-200">Connect any source tenant with a code, pull a complete read-only inventory from Microsoft Graph, and turn it into a migration plan — users, licensing, endpoints, risks and evidence.</p>
           <div className="mt-8 space-y-3">
             {[
-              { icon: Terminal, text: '80+ guided workflows with PowerShell, roles & escalation paths' },
-              { icon: ArrowLeftRight, text: 'Migration console with live passes, error handling & reports' },
-              { icon: ShieldCheck, text: 'Security hardening baseline & user provisioning via Microsoft Graph' },
-              { icon: Sparkles, text: 'AI assistant — OpenRouter, OpenAI or Claude, your choice' },
+              { icon: ArrowLeftRight, text: 'Source → target assessment with per-user licensing & UPN mapping' },
+              { icon: Terminal, text: 'Full Graph discovery: identities, mailboxes, devices, groups, domains' },
+              { icon: ShieldCheck, text: 'Strictly read-only — nothing is ever changed in the tenant' },
+              { icon: Sparkles, text: 'Excel discovery workbook + workstation naming convention built in' },
             ].map((f) => (
               <div key={f.text} className="flex items-center gap-3 text-sm text-blue-100">
                 <span className="rounded-lg bg-white/10 p-2"><f.icon size={16} /></span>{f.text}

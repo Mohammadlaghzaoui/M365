@@ -83,23 +83,23 @@ export function Layout({ session, onLogout }: { session: Session; onLogout: () =
   }, [query]);
 
   return (
-    <div className="flex min-h-screen bg-slate-50 dark:bg-slate-900">
-      {/* Sidebar */}
-      <aside className={`fixed inset-y-0 left-0 z-40 ${collapsed ? 'lg:w-[76px]' : 'lg:w-64'} w-64 transform border-r border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 transition-all lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        <div className={`flex h-16 items-center border-b border-slate-200 dark:border-slate-700 ${collapsed ? 'justify-center px-2' : 'gap-2.5 px-4'}`}>
-          {collapsed ? <LogoMark size={34} /> : (
+    <div className="flex min-h-screen bg-slate-100 dark:bg-slate-950">
+      {/* Sidebar — premium dark rail */}
+      <aside className={`fixed inset-y-0 left-0 z-40 flex flex-col ${collapsed ? 'lg:w-[72px]' : 'lg:w-64'} w-64 transform border-r border-slate-800 bg-slate-900 transition-all lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div className={`flex h-16 shrink-0 items-center border-b border-slate-800 ${collapsed ? 'justify-center px-2' : 'gap-2.5 px-4'}`}>
+          {collapsed ? <LogoMark size={32} /> : (
             <div className="min-w-0">
-              <LogoFull height={26} />
-              <div className="mt-0.5 text-[10px] text-slate-400 leading-tight pl-11 -mt-1">{branding.companyName}</div>
+              <LogoFull height={24} light />
+              <div className="mt-0.5 pl-10 text-[10px] leading-tight text-slate-500">{branding.companyName}</div>
             </div>
           )}
-          <button className="ml-auto lg:hidden text-slate-400" onClick={() => setSidebarOpen(false)}><X size={18} /></button>
+          <button className="ml-auto text-slate-400 lg:hidden" onClick={() => setSidebarOpen(false)}><X size={18} /></button>
         </div>
-        <nav className={`h-[calc(100vh-7.5rem)] overflow-y-auto pb-4 ${collapsed ? 'p-2' : 'p-3'}`}>
+        <nav className={`flex-1 overflow-y-auto py-3 ${collapsed ? 'px-2' : 'px-3'}`}>
           {GROUPS.map((group) => (
             <div key={group} className="mb-3">
-              {!collapsed && <div className="mb-1 px-3 text-[10px] font-bold uppercase tracking-wider text-slate-400">{group}</div>}
-              {collapsed && <div className="mx-2 mb-2 border-t border-slate-100 dark:border-slate-700/60 first:hidden" />}
+              {!collapsed && <div className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">{group}</div>}
+              {collapsed && <div className="mx-2 mb-2 border-t border-slate-800 first:hidden" />}
               {visibleNav.filter((n) => n.group === group).map((n) => (
                 <NavLink
                   key={n.to}
@@ -108,50 +108,66 @@ export function Layout({ session, onLogout }: { session: Session; onLogout: () =
                   title={n.label}
                   onClick={() => setSidebarOpen(false)}
                   className={({ isActive }) =>
-                    `mb-0.5 flex items-center rounded-lg text-sm font-medium transition-colors ${collapsed ? 'justify-center px-0 py-2.5' : 'gap-2.5 px-3 py-2'} ${
+                    `group relative mb-0.5 flex items-center rounded-lg text-sm transition-colors ${collapsed ? 'justify-center px-0 py-2.5' : 'gap-3 px-3 py-2'} ${
                       isActive
-                        ? 'bg-blue-600 text-white shadow-sm'
-                        : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
+                        ? 'bg-blue-500/10 font-semibold text-white before:absolute before:left-0 before:top-1/2 before:h-5 before:w-[3px] before:-translate-y-1/2 before:rounded-r before:bg-blue-500'
+                        : 'font-medium text-slate-400 hover:bg-white/5 hover:text-white'
                     }`
                   }
                 >
-                  <n.icon size={collapsed ? 18 : 16} className="shrink-0" />
-                  {!collapsed && n.label}
+                  {({ isActive }) => (
+                    <>
+                      <n.icon size={collapsed ? 18 : 16} className={`shrink-0 ${isActive ? 'text-blue-400' : 'text-slate-500 group-hover:text-slate-300'}`} />
+                      {!collapsed && n.label}
+                    </>
+                  )}
                 </NavLink>
               ))}
             </div>
           ))}
         </nav>
-        <button
-          onClick={toggleCollapsed}
-          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          className="absolute bottom-0 left-0 right-0 hidden h-12 items-center justify-center gap-2 border-t border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700/50 hover:text-blue-500 lg:flex"
-        >
-          {collapsed ? <ChevronsRight size={16} /> : <><ChevronsLeft size={16} /> Collapse</>}
-        </button>
+        <div className="shrink-0 border-t border-slate-800 p-2">
+          <button onClick={() => navigate('/settings')} title="Account & settings" className={`flex w-full items-center rounded-lg p-2 text-left hover:bg-white/5 ${collapsed ? 'justify-center' : 'gap-2.5'}`}>
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-600 text-xs font-bold text-white">{session.email.slice(0, 2).toUpperCase()}</div>
+            {!collapsed && (
+              <div className="min-w-0">
+                <div className="truncate text-xs font-medium text-slate-200">{session.email}</div>
+                <div className="text-[10px] text-slate-500">{roleLabel(getRole(session.email))}</div>
+              </div>
+            )}
+          </button>
+          <button
+            onClick={toggleCollapsed}
+            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            className="mt-1 hidden w-full items-center justify-center gap-2 rounded-lg py-1.5 text-[11px] font-semibold text-slate-500 hover:bg-white/5 hover:text-slate-300 lg:flex"
+          >
+            {collapsed ? <ChevronsRight size={15} /> : <><ChevronsLeft size={15} /> Collapse</>}
+          </button>
+        </div>
       </aside>
 
-      {sidebarOpen && <div className="fixed inset-0 z-30 bg-black/40 lg:hidden" onClick={() => setSidebarOpen(false)} />}
+      {sidebarOpen && <div className="fixed inset-0 z-30 bg-black/50 lg:hidden" onClick={() => setSidebarOpen(false)} />}
 
       {/* Main */}
-      <div className={`flex min-w-0 flex-1 flex-col transition-all ${collapsed ? 'lg:pl-[76px]' : 'lg:pl-64'}`}>
-        <header className="sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-800/90 px-4 backdrop-blur lg:px-8">
-          <button className="lg:hidden text-slate-500" onClick={() => setSidebarOpen(true)}><Menu size={20} /></button>
+      <div className={`flex min-w-0 flex-1 flex-col transition-all ${collapsed ? 'lg:pl-[72px]' : 'lg:pl-64'}`}>
+        <header className="sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-slate-200 bg-white/85 px-4 backdrop-blur dark:border-slate-800 dark:bg-slate-900/85 lg:px-8">
+          <button className="text-slate-500 lg:hidden" onClick={() => setSidebarOpen(true)}><Menu size={20} /></button>
           <div className="relative max-w-md flex-1">
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search modules..."
-              className="w-full rounded-lg border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 py-2 pl-9 pr-3 text-sm text-slate-800 dark:text-slate-100 focus:border-blue-500 focus:outline-none"
+              placeholder="Search modules…"
+              className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-9 pr-12 text-sm text-slate-800 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             />
+            <kbd className="pointer-events-none absolute right-2.5 top-1/2 hidden -translate-y-1/2 rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-slate-400 dark:border-slate-600 dark:bg-slate-900 sm:block">⌘K</kbd>
             {results.length > 0 && (
-              <div className="absolute top-full mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 py-1 shadow-lg">
+              <div className="absolute top-full mt-1 w-full overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-xl dark:border-slate-700 dark:bg-slate-800">
                 {results.map((r) => (
                   <button
                     key={r.to}
                     onClick={() => { navigate(r.to); setQuery(''); }}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700"
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"
                   >
                     <r.icon size={14} className="text-blue-500" />{r.label}
                   </button>
@@ -160,36 +176,30 @@ export function Layout({ session, onLogout }: { session: Session; onLogout: () =
             )}
           </div>
           <div className="ml-auto flex items-center gap-2">
-            <button
-              onClick={() => navigate('/settings')}
-              className="hidden sm:flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-600 px-2.5 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
-              title={session.via === 'microsoft' ? 'Signed in via Microsoft 365' : 'Local account — manage in Settings'}
-            >
-              <UserCircle2 size={15} className="text-emerald-500" />
-              {session.email}
-              <span className="rounded-full bg-blue-100 dark:bg-blue-900/50 px-2 py-0.5 text-[10px] font-bold text-blue-700 dark:text-blue-300">{roleLabel(getRole(session.email))}</span>
-            </button>
-            <button
-              onClick={() => { logout(); onLogout(); }}
-              className="rounded-lg border border-slate-200 dark:border-slate-600 p-2 text-slate-500 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
-              title="Sign out"
-            >
-              <LogOut size={16} />
-            </button>
+            <span className="hidden items-center gap-1.5 rounded-full border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 dark:border-slate-700 dark:text-slate-300 sm:flex">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> {session.via === 'microsoft' ? 'Microsoft 365' : 'Signed in'}
+            </span>
             <button
               onClick={() => setDark(!dark)}
-              className="rounded-lg border border-slate-200 dark:border-slate-600 p-2 text-slate-500 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
+              className="rounded-lg border border-slate-200 p-2 text-slate-500 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
               title="Toggle dark mode"
             >
               {dark ? <Sun size={16} /> : <Moon size={16} />}
+            </button>
+            <button
+              onClick={() => { logout(); onLogout(); }}
+              className="rounded-lg border border-slate-200 p-2 text-slate-500 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              title="Sign out"
+            >
+              <LogOut size={16} />
             </button>
           </div>
         </header>
         <main className="flex-1 p-4 lg:p-8">
           <Outlet />
         </main>
-        <footer className="border-t border-slate-200 dark:border-slate-700 px-8 py-3 text-center text-xs text-slate-400">
-          M365 WorkPilot — internal engineer tool. Always verify commands in a test scope before production changes.
+        <footer className="border-t border-slate-200 px-8 py-3 text-center text-xs text-slate-400 dark:border-slate-800">
+          WorkPilot · Microsoft 365 Migration Assessment Platform — read-only Graph discovery. Verify before any production change.
         </footer>
       </div>
     </div>
