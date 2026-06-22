@@ -12,6 +12,12 @@ export interface TenantIndexEntry {
   displayName: string;
   fetchedAt: string;
   users: number;
+  devices: number;
+  dataGB: number;
+  completeness: number;   // 0-100: exported workloads / total
+  desktopUsers: number;
+  mobileUsers: number;
+  connectedAt: string;    // first time this tenant was connected (kept until removed)
 }
 
 export interface ExportAuditEntry {
@@ -33,8 +39,23 @@ export function tenantIndex(): TenantIndexEntry[] {
 
 export function saveTenantResult(r: DiscoveryResult): void {
   save(`discovery:${r.org.tenantId}`, r);
+  const prev = tenantIndex().find((t) => t.tenantId === r.org.tenantId);
   const idx = tenantIndex().filter((t) => t.tenantId !== r.org.tenantId);
-  idx.unshift({ tenantId: r.org.tenantId, displayName: r.org.displayName, fetchedAt: r.fetchedAt, users: r.users.length });
+  const exported = r.workloads.filter((w) => w.status === 'Exported').length;
+  const completeness = r.workloads.length ? Math.round((exported / r.workloads.length) * 100) : 0;
+  const dataGB = Math.round((r.usage.mailboxTotalGB || 0) + (r.usage.oneDriveTotalGB || 0) + (r.usage.spoTotalGB || 0));
+  idx.unshift({
+    tenantId: r.org.tenantId,
+    displayName: r.org.displayName,
+    fetchedAt: r.fetchedAt,
+    users: r.users.length,
+    devices: r.devices?.total ?? 0,
+    dataGB,
+    completeness,
+    desktopUsers: r.appUsage?.desktopApp ?? 0,
+    mobileUsers: r.appUsage?.mobileOnly ?? 0,
+    connectedAt: prev?.connectedAt ?? r.fetchedAt,
+  });
   save(INDEX, idx);
 }
 
