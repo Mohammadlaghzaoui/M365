@@ -56,6 +56,18 @@ async function reportCsv(token, path) {
 const toGB = (b) => Math.round((Number(b) || 0) / 1073741824 * 100) / 100;
 const skuName = (id, skus) => skus.find((s) => s.skuId === id)?.skuPartNumber ?? id;
 
+// Workstation naming convention: map OS+model to device-type code + form factor.
+function classifyDevice(os, model) {
+  const o = os.toLowerCase(), m = model.toLowerCase();
+  if (/ipad|tab\b|tablet|surface pro/.test(m)) return { formFactor: 'Tablet', typeCode: 'T' };
+  if (o.includes('ios') || o.includes('ipados')) return /ipad/.test(m) ? { formFactor: 'Tablet', typeCode: 'T' } : { formFactor: 'Phone', typeCode: 'P' };
+  if (o.includes('android')) return { formFactor: 'Phone', typeCode: 'P' };
+  if (o.includes('mac')) return { formFactor: 'Mac', typeCode: 'M' };
+  if (o.includes('windows')) { const desktop = /optiplex|tower|desktop|sff|micro|workstation|precision t|mini/.test(m); return desktop ? { formFactor: 'Desktop', typeCode: 'D' } : { formFactor: 'Laptop', typeCode: 'L' }; }
+  if (o.includes('server')) return { formFactor: 'Server', typeCode: 'S' };
+  return { formFactor: 'Other', typeCode: 'A' };
+}
+
 export async function runReadOnlyDiscovery(token, log = () => {}) {
   const validations = [];
   const workloads = [];
@@ -110,6 +122,7 @@ export async function runReadOnlyDiscovery(token, log = () => {}) {
     licenses: (u.assignedLicenses ?? []).map((l) => skuName(l.skuId, skus)).join(', '),
     createdDateTime: String(u.createdDateTime ?? '').slice(0, 10),
     lastSignIn: String(u.signInActivity?.lastSignInDateTime ?? '').slice(0, 10),
+    appPlatforms: '', userCategory: '', lastOfficeActivity: '', deviceCount: 0, deviceTypes: '',
   }));
   const guests = users.filter((u) => u.userType === 'Guest').length;
   const disabled = users.filter((u) => !u.accountEnabled).length;
@@ -137,11 +150,14 @@ export async function runReadOnlyDiscovery(token, log = () => {}) {
     deviceInventory = dev.map((d) => {
       const os = String(d.operatingSystem || 'Unknown'); byOs[os] = (byOs[os] ?? 0) + 1;
       const comp = String(d.complianceState || 'unknown'); byCompliance[comp] = (byCompliance[comp] ?? 0) + 1;
+      const model = String(d.model ?? ''); const serial = String(d.serialNumber ?? '');
+      const { formFactor, typeCode } = classifyDevice(os, model);
       return {
         deviceName: d.deviceName ?? '', user: d.userPrincipalName ?? d.emailAddress ?? '', os, osVersion: d.osVersion ?? '',
-        compliance: comp, ownership: d.managedDeviceOwnerType ?? '', manufacturer: d.manufacturer ?? '', model: d.model ?? '',
-        serialNumber: d.serialNumber ?? '', managementAgent: d.managementAgent ?? '', encrypted: d.isEncrypted === true,
+        compliance: comp, ownership: d.managedDeviceOwnerType ?? '', manufacturer: d.manufacturer ?? '', model,
+        serialNumber: serial, managementAgent: d.managementAgent ?? '', encrypted: d.isEncrypted === true,
         lastSync: String(d.lastSyncDateTime ?? '').slice(0, 10), enrolled: String(d.enrolledDateTime ?? '').slice(0, 10),
+        formFactor, typeCode, suggestedName: `<SITE>-<W>${typeCode}-${serial || '<SERIAL>'}`,
       };
     });
     const compliant = byCompliance['compliant'] ?? 0;
@@ -150,6 +166,27 @@ export async function runReadOnlyDiscovery(token, log = () => {}) {
   } catch (e) {
     validations.push({ workload: 'Intune (devices)', object: 'managedDevices', status: e.status || 0, note: String(e.message) });
   }
+
+  // Who logs in with the Office desktop app vs mobile only (M365 Apps usage report).
+  try {
+    log('Get-MgReportM365AppUserDetail -Period D30', 'cmd');
+    const appRows = await reportCsv(token, "/reports/getM365AppUserDetail(period='D30')?$format=text/csv");
+    const keys = Object.keys(appRows[0] ?? {});
+    const upnK = keys.find((k) => /User Principal Name/i.test(k)) ?? 'User Principal Name';
+    const winK = keys.find((k) => /^Windows$/i.test(k)), macK = keys.find((k) => /^Mac$/i.test(k)), mobK = keys.find((k) => /^Mobile$/i.test(k)), webK = keys.find((k) => /^Web$/i.test(k)), actK = keys.find((k) => /Last Activity Date/i.test(k));
+    const usedV = (v) => !!v && !/^(no|false|0|)$/i.test(String(v).trim());
+    const map = new Map();
+    for (const r of appRows) { const u = (r[upnK] || '').toLowerCase(); if (!u) continue;
+      const plat = []; if (usedV(winK && r[winK])) plat.push('Windows'); if (usedV(macK && r[macK])) plat.push('Mac'); if (usedV(mobK && r[mobK])) plat.push('Mobile'); if (usedV(webK && r[webK])) plat.push('Web');
+      map.set(u, { plat, desktop: usedV(winK && r[winK]) || usedV(macK && r[macK]), mobile: usedV(mobK && r[mobK]), web: usedV(webK && r[webK]), last: actK ? (r[actK] || '') : '' }); }
+    const devByUser = new Map();
+    for (const d of deviceInventory) { const u = (d.user || '').toLowerCase(); if (!u) continue; if (!devByUser.has(u)) devByUser.set(u, new Set()); devByUser.get(u).add(d.os); }
+    for (const u of users) { const k = u.userPrincipalName.toLowerCase(); const a = map.get(k); const dt = devByUser.get(k);
+      if (dt) { u.deviceCount = deviceInventory.filter((d) => (d.user || '').toLowerCase() === k).length; u.deviceTypes = [...dt].join(', '); }
+      if (a) { u.appPlatforms = a.plat.join(', '); u.lastOfficeActivity = String(a.last).slice(0, 10); u.userCategory = a.desktop ? 'Office (desktop app)' : a.mobile ? 'Mobile only' : a.web ? 'Web only' : 'No Office activity'; }
+      else { u.userCategory = u.deviceTypes ? 'Has device, no Office activity' : 'No Office activity'; } }
+    log(`Get-MgReportM365AppUserDetail -> ${users.filter((u) => u.userCategory === 'Office (desktop app)').length} desktop-app, ${users.filter((u) => u.userCategory === 'Mobile only').length} mobile-only`, 'ok');
+  } catch (e) { log(`M365 Apps usage report unavailable: ${e.message}`, 'warn'); }
 
   // Usage reports (sizes)
   let usage = { mailboxCount: 0, mailboxTotalGB: 0, mailboxLargest: [], mailboxOver50GB: 0, archiveCount: 0, oneDriveCount: 0, oneDriveTotalGB: 0, oneDriveOver100GB: 0, spoSiteCount: 0, spoTotalGB: 0, available: false };
@@ -203,7 +240,15 @@ export async function runReadOnlyDiscovery(token, log = () => {}) {
   return {
     org: { displayName: org.displayName, tenantId: org.id, verifiedDomains: domains.filter((d) => d.isVerified).length },
     users, guests, disabled, groups, m365Groups, teams, securityGroups, distributionGroups,
-    licenses, domains, devices, deviceInventory, usage,
+    licenses, domains, devices, deviceInventory,
+    appUsage: {
+      desktopApp: users.filter((u) => u.userCategory === 'Office (desktop app)').length,
+      mobileOnly: users.filter((u) => u.userCategory === 'Mobile only').length,
+      webOnly: users.filter((u) => u.userCategory === 'Web only').length,
+      noActivity: users.filter((u) => (u.userCategory || '').includes('No Office activity')).length,
+      classified: users.filter((u) => u.appPlatforms).length,
+    },
+    usage,
     sharePointSites, teamsDetail: [], siteDrives: [], sharing: { anonymous: 0, organization: 0, users: 0, total: 0, sampledDrives: 0 },
     oneDriveSample: { sampled: 0, readable: usage.oneDriveCount, notReadable: 0, usedGB: usage.oneDriveTotalGB },
     caPolicies, appRegistrations, servicePrincipals,

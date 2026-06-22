@@ -181,13 +181,22 @@ export default function Discovery() {
           ['Licensed seats consumed', result.licenses.reduce((a, l) => a + l.consumed, 0)],
           ['SharePoint sites', result.sharePointSites.length],
           ['Total data (GB)', Math.round(result.usage.mailboxTotalGB + result.usage.oneDriveTotalGB + result.usage.spoTotalGB)],
+          ['Office desktop-app users', result.appUsage?.desktopApp ?? 0],
+          ['Mobile-only users', result.appUsage?.mobileOnly ?? 0],
+          ['Web-only users', result.appUsage?.webOnly ?? 0],
+          ['Users with no Office activity', result.appUsage?.noActivity ?? 0],
           ['Generated', new Date(result.fetchedAt).toLocaleString()],
         ],
       },
       {
         name: 'Users',
-        columns: ['Display name', 'UPN', 'Mail', 'Type', 'Enabled', 'Department', 'Job title', 'Usage location', 'Licenses', 'Created', 'Last sign-in'],
-        rows: result.users.map((u) => [u.displayName, u.userPrincipalName, u.mail, u.userType, u.accountEnabled ? 'Yes' : 'No', u.department, u.jobTitle, u.usageLocation, u.licenses, u.createdDateTime, u.lastSignIn]),
+        columns: ['Display name', 'UPN', 'Mail', 'Type', 'Enabled', 'Department', 'Job title', 'Usage location', 'Licenses', 'User category', 'App platforms', 'Last Office activity', 'Devices', 'Device types', 'Created', 'Last sign-in'],
+        rows: result.users.map((u) => [u.displayName, u.userPrincipalName, u.mail, u.userType, u.accountEnabled ? 'Yes' : 'No', u.department, u.jobTitle, u.usageLocation, u.licenses, u.userCategory ?? '', u.appPlatforms ?? '', u.lastOfficeActivity ?? '', u.deviceCount ?? 0, u.deviceTypes ?? '', u.createdDateTime, u.lastSignIn]),
+      },
+      {
+        name: 'Office vs mobile users',
+        columns: ['UPN', 'Display name', 'Category', 'App platforms', 'Last Office activity', 'Licenses', 'Devices', 'Device types'],
+        rows: result.users.filter((u) => u.accountEnabled && u.userType !== 'Guest').map((u) => [u.userPrincipalName, u.displayName, u.userCategory ?? '', u.appPlatforms ?? '', u.lastOfficeActivity ?? '', u.licenses, u.deviceCount ?? 0, u.deviceTypes ?? '']),
       },
       {
         name: 'Groups',
@@ -211,8 +220,19 @@ export default function Discovery() {
       },
       {
         name: 'Device inventory',
-        columns: ['Device', 'User', 'OS', 'OS version', 'Compliance', 'Ownership', 'Manufacturer', 'Model', 'Serial', 'Encrypted', 'Last sync', 'Enrolled'],
-        rows: (result.deviceInventory ?? []).map((d) => [d.deviceName, d.user, d.os, d.osVersion, d.compliance, d.ownership, d.manufacturer, d.model, d.serialNumber, d.encrypted ? 'Yes' : 'No', d.lastSync, d.enrolled]),
+        columns: ['Device', 'User', 'OS', 'OS version', 'Form factor', 'Type code', 'Suggested name', 'Compliance', 'Ownership', 'Manufacturer', 'Model', 'Serial', 'Encrypted', 'Last sync', 'Enrolled'],
+        rows: (result.deviceInventory ?? []).map((d) => [d.deviceName, d.user, d.os, d.osVersion, d.formFactor ?? '', d.typeCode ?? '', d.suggestedName ?? '', d.compliance, d.ownership, d.manufacturer, d.model, d.serialNumber, d.encrypted ? 'Yes' : 'No', d.lastSync, d.enrolled]),
+      },
+      {
+        name: 'Naming convention',
+        columns: ['Category', 'Name', 'Code'],
+        rows: [
+          ['Format', 'Workstation name = <SITE><n>-<WorkerType><DeviceType>-<Serial>  (e.g. AHA1-OW-BC349BC34)', ''],
+          ['Worker type', 'Field', 'F'], ['Worker type', 'Office', 'O'], ['Worker type', 'Temp', 'T'], ['Worker type', 'Kiosk / Common / Shared', 'K'],
+          ['Device type', 'Office Laptop', 'L'], ['Device type', 'Office Desktop', 'D'], ['Device type', 'Engineering Laptop', 'W'], ['Device type', 'Engineering Desktop', 'X'],
+          ['Device type', 'Executive Laptop', 'E'], ['Device type', 'Executive Desktop', 'F'], ['Device type', 'Mac Computers', 'M'], ['Device type', 'Server', 'S'],
+          ['Device type', 'Network Devices', 'N'], ['Device type', 'Appliance / IOT', 'A'], ['Device type', 'Phone', 'P'], ['Device type', 'Tablet', 'T'],
+        ],
       },
       {
         name: 'Compliance policies',

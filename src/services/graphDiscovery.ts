@@ -125,6 +125,12 @@ export interface DiscoveryUser {
   licenses: string;
   createdDateTime: string;
   lastSignIn: string;
+  // M365 Apps usage (who logs in with the desktop app vs mobile only)
+  appPlatforms: string;     // e.g. "Windows, Mobile"
+  userCategory: string;     // "Office (desktop app)" | "Mobile only" | "Web only" | "No Office activity"
+  lastOfficeActivity: string;
+  deviceCount: number;      // Intune managed devices owned by this user
+  deviceTypes: string;      // e.g. "Windows, iOS"
 }
 
 export interface DiscoveryGroup {
@@ -196,6 +202,31 @@ export interface DeviceRecord {
   encrypted: boolean;
   lastSync: string;
   enrolled: string;
+  formFactor: string;       // Desktop | Laptop | Phone | Tablet | Server | Other
+  typeCode: string;         // naming-convention device-type code (L/D/W/X/E/F/M/P/T/...)
+  suggestedName: string;    // skeleton name per the workstation convention
+}
+
+/**
+ * Workstation naming convention (from the customer's "Workstation Naming" sheet).
+ * Worker types: Field=F, Office=O, Temp=T, Kiosk/Shared=K.
+ * Device types: Office Laptop=L, Office Desktop=D, Engineering Laptop=W,
+ * Engineering Desktop=X, Executive Laptop=E, Executive Desktop=F, Mac=M,
+ * Server=S, Network=N, Appliance/IOT=A, Phone=P, Tablet=T.
+ * Format: <SITE><n>-<WorkerType><DeviceType>-<Serial> e.g. AHA1-OW-BC349BC34.
+ */
+function classifyDevice(os: string, model: string): { formFactor: string; typeCode: string } {
+  const o = os.toLowerCase(), m = model.toLowerCase();
+  if (/ipad|tab\b|tablet|surface pro/.test(m)) return { formFactor: 'Tablet', typeCode: 'T' };
+  if (o.includes('ios') || o.includes('ipados')) return /ipad/.test(m) ? { formFactor: 'Tablet', typeCode: 'T' } : { formFactor: 'Phone', typeCode: 'P' };
+  if (o.includes('android')) return { formFactor: 'Phone', typeCode: 'P' };
+  if (o.includes('mac')) return { formFactor: 'Mac', typeCode: 'M' };
+  if (o.includes('windows')) {
+    const desktop = /optiplex|tower|desktop|sff|micro|workstation|precision t|mini/.test(m);
+    return desktop ? { formFactor: 'Desktop', typeCode: 'D' } : { formFactor: 'Laptop', typeCode: 'L' };
+  }
+  if (o.includes('server')) return { formFactor: 'Server', typeCode: 'S' };
+  return { formFactor: 'Other', typeCode: 'A' };
 }
 
 export interface DiscoveryResult {
@@ -212,6 +243,7 @@ export interface DiscoveryResult {
   domains: DiscoveryDomain[];
   devices: { total: number; byOs: Record<string, number>; compliant: number; nonCompliant: number; byCompliance: Record<string, number> };
   deviceInventory: DeviceRecord[];
+  appUsage: { desktopApp: number; mobileOnly: number; webOnly: number; noActivity: number; classified: number };
   usage: UsageStats;
   // Extended assessment workloads
   sharePointSites: { id: string; name: string; webUrl: string; created: string; lastModified: string }[];
@@ -357,6 +389,7 @@ export async function runDiscovery(log: Logger = noop): Promise<DiscoveryResult>
     licenses: ((u.assignedLicenses as { skuId: string }[]) ?? []).map((l) => skuName(l.skuId, skus)).join(', '),
     createdDateTime: String(u.createdDateTime ?? '').slice(0, 10),
     lastSignIn: String((u.signInActivity as { lastSignInDateTime?: string })?.lastSignInDateTime ?? '').slice(0, 10),
+    appPlatforms: '', userCategory: '', lastOfficeActivity: '', deviceCount: 0, deviceTypes: '',
   }));
   const guests = users.filter((u) => u.userType === 'Guest').length;
   const disabled = users.filter((u) => !u.accountEnabled).length;
@@ -397,6 +430,9 @@ export async function runDiscovery(log: Logger = noop): Promise<DiscoveryResult>
       byOs[os] = (byOs[os] ?? 0) + 1;
       const comp = String(d.complianceState || 'unknown');
       byCompliance[comp] = (byCompliance[comp] ?? 0) + 1;
+      const model = String(d.model ?? '');
+      const serial = String(d.serialNumber ?? '');
+      const { formFactor, typeCode } = classifyDevice(os, model);
       return {
         deviceName: String(d.deviceName ?? ''),
         user: String(d.userPrincipalName ?? d.emailAddress ?? ''),
@@ -405,12 +441,16 @@ export async function runDiscovery(log: Logger = noop): Promise<DiscoveryResult>
         compliance: comp,
         ownership: String(d.managedDeviceOwnerType ?? ''),
         manufacturer: String(d.manufacturer ?? ''),
-        model: String(d.model ?? ''),
-        serialNumber: String(d.serialNumber ?? ''),
+        model,
+        serialNumber: serial,
         managementAgent: String(d.managementAgent ?? ''),
         encrypted: d.isEncrypted === true,
         lastSync: String(d.lastSyncDateTime ?? '').slice(0, 10),
         enrolled: String(d.enrolledDateTime ?? '').slice(0, 10),
+        formFactor,
+        typeCode,
+        // Skeleton per the workstation convention; engineer fills site + worker type.
+        suggestedName: `<SITE>-<W>${typeCode}-${serial || '<SERIAL>'}`,
       };
     });
     const compliant = byCompliance['compliant'] ?? 0;
@@ -420,6 +460,63 @@ export async function runDiscovery(log: Logger = noop): Promise<DiscoveryResult>
     log(`   compliance: ${compliant} compliant, ${nonCompliant} non-compliant/other`, 'info');
   } catch {
     log('→ device read skipped (no Intune scope/licence)', 'warn');
+  }
+
+  // ---- Who logs in with the Office desktop app vs mobile only ----
+  // Microsoft 365 Apps usage report: per-user platform flags (Windows/Mac/Mobile/Web).
+  log("Get-MgReportM365AppUserDetail -Period D30", 'cmd');
+  let officeClassified = 0;
+  try {
+    const appRows = await getReportCsv("/reports/getM365AppUserDetail(period='D30')?$format=text/csv");
+    const keys = Object.keys(appRows[0] ?? {});
+    const upnKey = keys.find((k) => /User Principal Name/i.test(k)) ?? 'User Principal Name';
+    const winKey = keys.find((k) => /^Windows$/i.test(k));
+    const macKey = keys.find((k) => /^Mac$/i.test(k));
+    const mobKey = keys.find((k) => /^Mobile$/i.test(k));
+    const webKey = keys.find((k) => /^Web$/i.test(k));
+    const actKey = keys.find((k) => /Last Activity Date/i.test(k));
+    const used = (v?: string) => !!v && !/^(no|false|0|)$/i.test(v.trim());
+    const map = new Map<string, { platforms: string[]; desktop: boolean; mobile: boolean; web: boolean; last: string }>();
+    for (const r of appRows) {
+      const upn = (r[upnKey] || '').toLowerCase();
+      if (!upn) continue;
+      const desktop = used(winKey ? r[winKey] : '') || used(macKey ? r[macKey] : '');
+      const mobile = used(mobKey ? r[mobKey] : '');
+      const web = used(webKey ? r[webKey] : '');
+      const platforms: string[] = [];
+      if (used(winKey ? r[winKey] : '')) platforms.push('Windows');
+      if (used(macKey ? r[macKey] : '')) platforms.push('Mac');
+      if (mobile) platforms.push('Mobile');
+      if (web) platforms.push('Web');
+      map.set(upn, { platforms, desktop, mobile, web, last: actKey ? (r[actKey] || '') : '' });
+    }
+    // Per-user Intune device types/count from the inventory.
+    const devByUser = new Map<string, Set<string>>();
+    for (const d of deviceInventory) {
+      const u = d.user.toLowerCase();
+      if (!u) continue;
+      if (!devByUser.has(u)) devByUser.set(u, new Set());
+      devByUser.get(u)!.add(d.os);
+    }
+    for (const u of users) {
+      const key = u.userPrincipalName.toLowerCase();
+      const a = map.get(key);
+      const dt = devByUser.get(key);
+      if (dt) { u.deviceCount = [...deviceInventory].filter((d) => d.user.toLowerCase() === key).length; u.deviceTypes = [...dt].join(', '); }
+      if (a) {
+        u.appPlatforms = a.platforms.join(', ');
+        u.lastOfficeActivity = String(a.last).slice(0, 10);
+        u.userCategory = a.desktop ? 'Office (desktop app)' : a.mobile ? 'Mobile only' : a.web ? 'Web only' : 'No Office activity';
+        officeClassified++;
+      } else {
+        u.userCategory = u.deviceTypes ? 'Has device, no Office activity' : 'No Office activity';
+      }
+    }
+    const deskCount = users.filter((u) => u.userCategory === 'Office (desktop app)').length;
+    const mobCount = users.filter((u) => u.userCategory === 'Mobile only').length;
+    log(`→ M365 Apps usage classified ${officeClassified} user(s): ${deskCount} desktop-app, ${mobCount} mobile-only`, 'ok');
+  } catch (e) {
+    log(`→ M365 Apps usage report unavailable: ${e instanceof Error ? e.message : e}`, 'warn');
   }
 
   const usage = await runUsage(log);
@@ -596,7 +693,15 @@ export async function runDiscovery(log: Logger = noop): Promise<DiscoveryResult>
     org: { displayName: org.displayName, tenantId: org.id, verifiedDomains: domains.filter((d) => d.isVerified).length },
     users, guests, disabled,
     groups, m365Groups, teams, securityGroups, distributionGroups,
-    licenses, domains, devices, deviceInventory, usage,
+    licenses, domains, devices, deviceInventory,
+    appUsage: {
+      desktopApp: users.filter((u) => u.userCategory === 'Office (desktop app)').length,
+      mobileOnly: users.filter((u) => u.userCategory === 'Mobile only').length,
+      webOnly: users.filter((u) => u.userCategory === 'Web only').length,
+      noActivity: users.filter((u) => u.userCategory.includes('No Office activity')).length,
+      classified: users.filter((u) => u.appPlatforms).length,
+    },
+    usage,
     sharePointSites, teamsDetail, siteDrives, sharing, oneDriveSample,
     caPolicies, appRegistrations, servicePrincipals,
     intune: { configs: intuneConfigs.length, compliance: intuneCompliance.length, devices: devices.total },
