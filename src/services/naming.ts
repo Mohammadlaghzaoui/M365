@@ -27,6 +27,19 @@ export function setMigrationTarget(tenantId: string, name: string): void {
   save(`migration-target:${tenantId}`, name.trim());
 }
 
+export function getTargetDomain(tenantId: string): string {
+  return load<string>(`target-domain:${tenantId}`, 'kelso-industries.com');
+}
+export function setTargetDomain(tenantId: string, domain: string): void {
+  save(`target-domain:${tenantId}`, domain.trim().toLowerCase());
+}
+
+/** Map a source UPN/email to the target tenant domain (keeps the local part). */
+export function mapUpnToTarget(sourceUpn: string, targetDomain: string): string {
+  const local = (sourceUpn || '').split('@')[0];
+  return local && targetDomain ? `${local}@${targetDomain}` : '';
+}
+
 /** PC (laptop/desktop/mac) vs Mobile (phone/tablet). */
 export function endpointClassOf(formFactor: string): 'PC' | 'Mobile' | '' {
   const f = (formFactor || '').toLowerCase();

@@ -103,16 +103,17 @@ export async function runReadOnlyDiscovery(token, log = () => {}) {
   const licenses = skus.map((s) => ({ skuPartNumber: s.skuPartNumber, enabled: s.prepaidUnits?.enabled ?? 0, consumed: s.consumedUnits ?? 0, available: (s.prepaidUnits?.enabled ?? 0) - (s.consumedUnits ?? 0) }));
   log(`Get-MgSubscribedSku -> ${licenses.length} SKU(s)`, 'ok');
 
-  const USER_SELECT = 'displayName,userPrincipalName,mail,userType,accountEnabled,department,jobTitle,usageLocation,assignedLicenses,createdDateTime';
+  const USER_SELECT = 'displayName,userPrincipalName,mail,userType,accountEnabled,department,jobTitle,usageLocation,assignedLicenses,createdDateTime,proxyAddresses,onPremisesSyncEnabled,companyName,officeLocation,mobilePhone';
+  const USER_EXPAND = '&$expand=manager($select=userPrincipalName,displayName)';
   // signInActivity needs AuditLog.Read.All — fall back without it if not consented.
   let rawUsers;
   try {
-    rawUsers = await gall(token, `/users?$select=${USER_SELECT},signInActivity&$top=999`);
+    rawUsers = await gall(token, `/users?$select=${USER_SELECT},signInActivity${USER_EXPAND}&$top=999`);
   } catch (e) {
     if (e.status === 403 || e.status === 401) {
       log('signInActivity needs AuditLog.Read.All (not consented) — retrying without last sign-in dates', 'warn');
       validations.push({ workload: 'Users (sign-in activity)', object: 'signInActivity', status: 403, note: 'Last sign-in dates require AuditLog.Read.All consent; all other user attributes were collected.' });
-      rawUsers = await gall(token, `/users?$select=${USER_SELECT}&$top=999`);
+      rawUsers = await gall(token, `/users?$select=${USER_SELECT}${USER_EXPAND}&$top=999`);
     } else { throw e; }
   }
   const users = rawUsers.map((u) => ({
@@ -123,6 +124,8 @@ export async function runReadOnlyDiscovery(token, log = () => {}) {
     createdDateTime: String(u.createdDateTime ?? '').slice(0, 10),
     lastSignIn: String(u.signInActivity?.lastSignInDateTime ?? '').slice(0, 10),
     appPlatforms: '', userCategory: '', workerType: '', lastOfficeActivity: '', deviceCount: 0, deviceTypes: '',
+    aliases: ((u.proxyAddresses ?? []).filter((p) => /^smtp:/i.test(p)).map((p) => p.replace(/^smtp:/i, '')).join(', ')),
+    hybrid: u.onPremisesSyncEnabled === true ? 'Synced (AD)' : 'Cloud only', company: u.companyName ?? '', office: u.officeLocation ?? '', mobile: u.mobilePhone ?? '', manager: u.manager?.userPrincipalName ?? '', mailboxType: '', mailboxGB: 0,
   }));
   const guests = users.filter((u) => u.userType === 'Guest').length;
   const disabled = users.filter((u) => !u.accountEnabled).length;
@@ -283,6 +286,7 @@ export async function runReadOnlyDiscovery(token, log = () => {}) {
     caPolicies, appRegistrations, servicePrincipals,
     intune: { configs: intuneConfigs.length, compliance: intuneCompliance.length, devices: devices.total },
     compliancePolicies: intuneCompliance.map((p) => ({ name: p.displayName ?? '', platform: /android/i.test(String(p['@odata.type'] ?? '')) ? 'Android' : /ios/i.test(String(p['@odata.type'] ?? '')) ? 'iOS/iPadOS' : /macOS/i.test(String(p['@odata.type'] ?? '')) ? 'macOS' : /windows/i.test(String(p['@odata.type'] ?? '')) ? 'Windows' : 'Other' })),
+    adminRoles: [],
     oneDrive: { readable: usage.oneDriveCount, notReadable: 0 },
     validations, workloads,
     fetchedAt: new Date().toISOString(),

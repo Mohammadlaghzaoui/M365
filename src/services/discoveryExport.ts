@@ -3,13 +3,14 @@ import { Assessment } from './migrationAssessment';
 import { Sheet, downloadWorkbook } from './excelExport';
 import { recordExportAudit } from './tenantStore';
 import { getSession } from './auth';
-import { getSiteCode, getMigrationTarget, endpointClassOf, deviceTypeLabel, suggestedName, proposedLicenseOf } from './naming';
+import { getSiteCode, getMigrationTarget, getTargetDomain, mapUpnToTarget, endpointClassOf, deviceTypeLabel, suggestedName, proposedLicenseOf } from './naming';
 
 /** Build the full multi-sheet discovery workbook (shared by Discovery + Tenant detail). */
 export function buildDiscoverySheets(result: DiscoveryResult, analysis: Assessment | null): Sheet[] {
   const tid = result.org.tenantId;
   const site = getSiteCode(tid);
   const target = getMigrationTarget(tid);
+  const targetDomain = getTargetDomain(tid);
   const workerByUser = new Map(result.users.map((u) => [u.userPrincipalName.toLowerCase(), u.workerType] as const));
   return [
     {
@@ -46,8 +47,23 @@ export function buildDiscoverySheets(result: DiscoveryResult, analysis: Assessme
     },
     {
       name: 'Users & Licensing',
-      columns: ['Display name', 'UPN', 'Type', 'Enabled', 'Department', 'Worker type', 'Login evidence', 'Current licenses', 'Proposed target license', 'Action', 'Last sign-in'],
-      rows: result.users.filter((u) => u.userType !== 'Guest').map((u) => [u.displayName, u.userPrincipalName, u.userType, u.accountEnabled ? 'Yes' : 'No', u.department, u.workerType || '', u.appPlatforms || 'No evidence', u.licenses || '', proposedLicenseOf(u.workerType || ''), u.workerType ? 'Assign on cutover' : 'Validate manually', u.lastSignIn]),
+      columns: ['Display name', 'UPN', 'Type', 'Enabled', 'Department', 'Worker type', 'Mailbox type', 'Mailbox GB', 'Login evidence', 'Current licenses', 'Proposed target license', 'Action', 'Last sign-in'],
+      rows: result.users.filter((u) => u.userType !== 'Guest').map((u) => [u.displayName, u.userPrincipalName, u.userType, u.accountEnabled ? 'Yes' : 'No', u.department, u.workerType || '', u.mailboxType || '', (u.mailboxGB ?? 0) || '', u.appPlatforms || 'No evidence', u.licenses || '', proposedLicenseOf(u.workerType || ''), u.workerType ? 'Assign on cutover' : 'Validate manually', u.lastSignIn]),
+    },
+    {
+      name: 'Mailboxes & Identity',
+      columns: ['UPN', 'Primary mail', 'Mailbox type', 'Mailbox GB', 'Aliases (SMTP)', 'Identity (AD sync)', 'Manager', 'Company', 'Office', 'Mobile'],
+      rows: result.users.filter((u) => u.userType !== 'Guest').map((u) => [u.userPrincipalName, u.mail || '', u.mailboxType || '', (u.mailboxGB ?? 0) || '', u.aliases || '', u.hybrid || '', u.manager || '', u.company || '', u.office || '', u.mobile || '']),
+    },
+    {
+      name: 'Test Migration (Pilot)',
+      columns: ['Source UPN', `Target UPN (${targetDomain})`, 'Display name', 'Worker type', 'Proposed license', 'Mailbox GB', 'Aliases (SMTP)', 'Action'],
+      rows: result.users.filter((u) => u.accountEnabled && u.userType !== 'Guest').slice(0, 25).map((u) => [u.userPrincipalName, mapUpnToTarget(u.userPrincipalName, targetDomain), u.displayName, u.workerType || 'Validate', proposedLicenseOf(u.workerType || ''), (u.mailboxGB ?? 0) || '', u.aliases || '', u.workerType ? 'Pilot wave 1' : 'Validate then pilot']),
+    },
+    {
+      name: 'Admin roles',
+      columns: ['Admin role', 'Member UPN'],
+      rows: (result.adminRoles ?? []).flatMap((x) => x.members.map((m) => [x.role, m] as (string | number)[])),
     },
     {
       name: 'Endpoint Plan',

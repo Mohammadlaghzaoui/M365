@@ -8,7 +8,8 @@ import { save } from '../store/useLocalStorage';
 import { DiscoveryResult } from '../services/graphDiscovery';
 import {
   getSiteCode, setSiteCode, getMigrationTarget, setMigrationTarget, NAMING_FORMAT,
-  endpointClassOf, deviceCodeOf, deviceTypeLabel, suggestedName, proposedLicenseOf, LICENSE_RULES,
+  getTargetDomain, setTargetDomain, mapUpnToTarget,
+  endpointClassOf, deviceTypeLabel, suggestedName, proposedLicenseOf, LICENSE_RULES,
 } from '../services/naming';
 
 type Cell = string | number;
@@ -49,8 +50,9 @@ const SECTIONS = [
   { id: 'users', label: '2. Users & Licensing' },
   { id: 'endpoints', label: '3. Endpoint Plan' },
   { id: 'inventory', label: '4. Migration Inventory' },
-  { id: 'risks', label: '5. Risks & Issues' },
-  { id: 'evidence', label: '6. Data Sources / Evidence' },
+  { id: 'testmig', label: '5. Test Migration' },
+  { id: 'risks', label: '6. Risks & Issues' },
+  { id: 'evidence', label: '7. Data Sources / Evidence' },
 ];
 
 export default function TenantDetail() {
@@ -60,6 +62,8 @@ export default function TenantDetail() {
   const analysis = useMemo(() => (result ? assess(result) : null), [result]);
   const [site, setSite] = useState(() => getSiteCode(tenantId));
   const [target, setTarget] = useState(() => getMigrationTarget(tenantId));
+  const [targetDomain, setTargetDomainState] = useState(() => getTargetDomain(tenantId));
+  const [pilotSize, setPilotSize] = useState(5);
 
   if (!result) {
     return (
@@ -89,6 +93,21 @@ export default function TenantDetail() {
   // ---- License proposal ----
   const licCount = (m: string) => r.users.filter((u) => u.accountEnabled && u.userType !== 'Guest' && (u.workerType || '') === m).length;
   const licenseSummary = LICENSE_RULES.map((x) => ({ ...x, count: licCount(x.match) }));
+
+  // ---- Test migration pilot: a representative sample with source -> target UPN mapping ----
+  const firstDeviceOf = (upn: string) => {
+    const d = (r.deviceInventory ?? []).find((x) => (x.user || '').toLowerCase() === upn.toLowerCase());
+    return d ? suggestedName(site, d, workerByUser.get(upn.toLowerCase()) ?? '') : '';
+  };
+  const candidates = r.users.filter((u) => u.accountEnabled && u.userType !== 'Guest');
+  const pilot = (() => {
+    const office = candidates.filter((u) => u.workerType === 'Office');
+    const field = candidates.filter((u) => u.workerType === 'Field');
+    const other = candidates.filter((u) => !u.workerType);
+    const mix = [...office.slice(0, Math.ceil(pilotSize / 2)), ...field.slice(0, 1), ...other.slice(0, pilotSize)];
+    const seen = new Set<string>();
+    return mix.filter((u) => (seen.has(u.userPrincipalName) ? false : (seen.add(u.userPrincipalName), true))).slice(0, pilotSize);
+  })();
 
   const overviewRows: Cell[][] = [
     ['Source tenant', r.org.displayName],
@@ -120,6 +139,7 @@ export default function TenantDetail() {
     ['Mailbox sizing', "GET /reports/getMailboxUsageDetail", r.usage.available ? 'Collected' : 'Not available', r.usage.mailboxCount],
     ['SharePoint sites', 'GET /sites', 'Collected', r.sharePointSites.length],
     ['Conditional Access', 'GET /identity/conditionalAccess/policies', 'Collected', r.caPolicies.length],
+    ['Admin roles', 'GET /directoryRoles?$expand=members', (r.adminRoles ?? []).length ? 'Collected' : 'None', (r.adminRoles ?? []).reduce((a, x) => a + x.members.length, 0)],
   ];
 
   return (
@@ -195,12 +215,22 @@ export default function TenantDetail() {
           </table>
         </div>
         <DataTable
-          columns={['User', 'UPN', 'Worker type', 'Login evidence', 'Current licenses', 'Proposed target license', 'Action']}
+          columns={['User', 'UPN', 'Worker type', 'Mailbox', 'Login evidence', 'Current licenses', 'Proposed target license', 'Action']}
           rows={r.users.filter((u) => u.userType !== 'Guest').map((u) => [
-            u.displayName, u.userPrincipalName, u.workerType || '—', u.appPlatforms || 'No evidence',
+            u.displayName, u.userPrincipalName, u.workerType || '—', u.mailboxType || '—', u.appPlatforms || 'No evidence',
             u.licenses || '—', proposedLicenseOf(u.workerType || ''),
             (u.workerType ? 'Assign on cutover' : 'Validate manually'),
           ])}
+        />
+
+        <h3 className="mb-2 mt-6 text-sm font-semibold text-slate-700 dark:text-slate-200">Mailboxes &amp; identity detail</h3>
+        <DataTable
+          columns={['UPN', 'Primary mail', 'Mailbox type', 'Mailbox GB', 'Aliases (SMTP)', 'Identity', 'Manager', 'Company', 'Office', 'Mobile']}
+          rows={r.users.filter((u) => u.userType !== 'Guest').map((u) => [
+            u.userPrincipalName, u.mail || '—', u.mailboxType || '—', (u.mailboxGB ?? 0) ? (u.mailboxGB ?? 0).toFixed(2) : '—',
+            u.aliases || '—', u.hybrid || '—', u.manager || '—', u.company || '—', u.office || '—', u.mobile || '—',
+          ])}
+          align={{ 3: 'right' }}
         />
       </Section>
 
@@ -252,8 +282,36 @@ export default function TenantDetail() {
         </div>
       </Section>
 
-      {/* 5. Risks & Issues */}
-      <Section id="risks" title="5. Risks & Issues">
+      {/* 5. Test Migration (pilot) */}
+      <Section id="testmig" title="5. Test Migration (Pilot Batch)">
+        <p className="mb-3 text-sm text-slate-500">A representative pilot batch to validate the {r.org.displayName} → {target} migration before the full cutover. Source UPNs are mapped to the target domain; verify the mapping and licenses with both tenants.</p>
+        <div className="mb-3 flex flex-wrap items-end gap-4">
+          <label className="text-sm text-slate-600 dark:text-slate-300">
+            <span className="mb-1 block font-medium">Target domain</span>
+            <input value={targetDomain} onChange={(e) => { setTargetDomainState(e.target.value); setTargetDomain(tenantId, e.target.value); }}
+              className="w-56 rounded border border-slate-300 bg-white px-2 py-1 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100" />
+          </label>
+          <label className="text-sm text-slate-600 dark:text-slate-300">
+            <span className="mb-1 block font-medium">Pilot size</span>
+            <input type="number" min={1} max={50} value={pilotSize} onChange={(e) => setPilotSize(Math.max(1, Math.min(50, Number(e.target.value) || 1)))}
+              className="w-20 rounded border border-slate-300 bg-white px-2 py-1 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100" />
+          </label>
+        </div>
+        <DataTable
+          columns={['Source UPN', 'Target UPN', 'Display name', 'Worker type', 'Proposed license', 'Mailbox GB', 'Aliases (SMTP)', 'Suggested device name', 'Action']}
+          rows={pilot.map((u) => [
+            u.userPrincipalName, mapUpnToTarget(u.userPrincipalName, targetDomain) || '—', u.displayName,
+            u.workerType || 'Validate', proposedLicenseOf(u.workerType || ''),
+            (u.mailboxGB ?? 0) ? (u.mailboxGB ?? 0).toFixed(2) : '—', u.aliases || '—',
+            firstDeviceOf(u.userPrincipalName) || '—', u.workerType ? 'Pilot wave 1' : 'Validate then pilot',
+          ])}
+          align={{ 5: 'right' }}
+        />
+        <p className="mt-2 text-xs text-slate-400">Pilot is a preview only — no changes are made to either tenant. Use it to confirm UPN mapping, licensing and device naming before scheduling waves.</p>
+      </Section>
+
+      {/* 6. Risks & Issues */}
+      <Section id="risks" title="6. Risks & Issues">
         {analysis && (
           <ul className="mb-4 space-y-1.5">
             {analysis.findings.filter((f) => f.level !== 'info').map((f, i) => (
@@ -264,12 +322,14 @@ export default function TenantDetail() {
             ))}
           </ul>
         )}
-        <div className="mb-1 text-sm font-medium text-slate-700 dark:text-slate-200">Validation items ({r.validations.length})</div>
+        <h3 className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-200">Privileged accounts ({(r.adminRoles ?? []).reduce((a, x) => a + x.members.length, 0)})</h3>
+        <DataTable columns={['Admin role', 'Members']} rows={(r.adminRoles ?? []).map((x) => [x.role, x.members.join(', ')])} />
+        <div className="mb-1 mt-6 text-sm font-medium text-slate-700 dark:text-slate-200">Validation items ({r.validations.length})</div>
         <DataTable columns={['Data set', 'Status', 'Note']} rows={r.validations.map((v) => [v.workload, v.status || '—', v.note])} />
       </Section>
 
-      {/* 6. Data Sources / Evidence */}
-      <Section id="evidence" title="6. Data Sources / Evidence">
+      {/* 7. Data Sources / Evidence */}
+      <Section id="evidence" title="7. Data Sources / Evidence">
         <p className="mb-3 text-sm text-slate-500">Every figure above is collected read-only from Microsoft Graph. This is the provenance for the migration analysis.</p>
         <DataTable columns={['Data set', 'Microsoft Graph source', 'Status', 'Records']} rows={evidence} align={{ 3: 'right' }} />
       </Section>

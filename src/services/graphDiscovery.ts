@@ -132,6 +132,15 @@ export interface DiscoveryUser {
   lastOfficeActivity: string;
   deviceCount: number;      // managed/registered devices owned by this user
   deviceTypes: string;      // e.g. "Windows, iOS"
+  // Migration-critical identity & mailbox detail
+  aliases: string;          // all SMTP proxy addresses
+  hybrid: string;           // "Synced (AD)" | "Cloud only"
+  company: string;
+  office: string;
+  mobile: string;
+  manager: string;          // manager UPN
+  mailboxType: string;      // "User" | "Shared (likely)" | "No mailbox"
+  mailboxGB: number;        // mailbox size from the usage report
 }
 
 export interface DiscoveryGroup {
@@ -161,6 +170,8 @@ export interface DiscoveryDomain {
 export interface UsageStats {
   mailboxCount: number;
   mailboxTotalGB: number;
+  mailboxUpns: string[];     // lowercased UPNs that have a mailbox (for shared-mailbox detection)
+  mailboxSizes: Record<string, number>;  // lowercased UPN -> GB
   mailboxLargest: { upn: string; gb: number }[];
   mailboxOver50GB: number;
   archiveCount: number;
@@ -258,6 +269,7 @@ export interface DiscoveryResult {
   servicePrincipals: { appId: string; displayName: string; type: string; enabled: boolean }[];
   intune: { configs: number; compliance: number; devices: number };
   compliancePolicies: { name: string; platform: string }[];
+  adminRoles: { role: string; members: string[] }[];
   oneDrive: { readable: number; notReadable: number };
   validations: ValidationItem[];
   workloads: WorkloadReadiness[];
@@ -285,7 +297,7 @@ async function getReportCsv(path: string): Promise<Record<string, string>[]> {
 const toGB = (bytes: string | number) => Math.round((Number(bytes) || 0) / 1073741824 * 100) / 100;
 
 export async function runUsage(log: Logger = noop): Promise<UsageStats> {
-  const empty: UsageStats = { mailboxCount: 0, mailboxTotalGB: 0, mailboxLargest: [], mailboxOver50GB: 0, archiveCount: 0, oneDriveCount: 0, oneDriveTotalGB: 0, oneDriveOver100GB: 0, spoSiteCount: 0, spoTotalGB: 0, available: false };
+  const empty: UsageStats = { mailboxCount: 0, mailboxTotalGB: 0, mailboxUpns: [], mailboxSizes: {}, mailboxLargest: [], mailboxOver50GB: 0, archiveCount: 0, oneDriveCount: 0, oneDriveTotalGB: 0, oneDriveOver100GB: 0, spoSiteCount: 0, spoTotalGB: 0, available: false };
   try {
     log("Get-MgReportMailboxUsageDetail -Period D30", 'cmd');
     const mbx = await getReportCsv("/reports/getMailboxUsageDetail(period='D30')?$format=text/csv");
@@ -313,6 +325,8 @@ export async function runUsage(log: Logger = noop): Promise<UsageStats> {
     return {
       mailboxCount: mailboxes.length,
       mailboxTotalGB,
+      mailboxUpns: mailboxes.map((m) => m.upn.toLowerCase()),
+      mailboxSizes: Object.fromEntries(mailboxes.map((m) => [m.upn.toLowerCase(), m.gb])),
       mailboxLargest: largest,
       mailboxOver50GB: mailboxes.filter((m) => m.gb > 50).length,
       archiveCount: mailboxes.filter((m) => m.archive).length,
@@ -361,24 +375,26 @@ export async function runDiscovery(log: Logger = noop): Promise<DiscoveryResult>
   log(`→ ${licenses.length} license SKU(s), ${licenses.reduce((a, l) => a + l.consumed, 0)} seats consumed`, 'ok');
 
   log('Get-MgUser -All -Property displayName,upn,mail,userType,licenses,signInActivity …', 'cmd');
-  const USER_SELECT = 'displayName,userPrincipalName,mail,userType,accountEnabled,department,jobTitle,usageLocation,assignedLicenses,createdDateTime';
+  const USER_SELECT = 'displayName,userPrincipalName,mail,userType,accountEnabled,department,jobTitle,usageLocation,assignedLicenses,createdDateTime,proxyAddresses,onPremisesSyncEnabled,companyName,officeLocation,mobilePhone';
+  const USER_EXPAND = '&$expand=manager($select=userPrincipalName,displayName)';
   // signInActivity needs AuditLog.Read.All. If that consent is missing the whole
   // /users call 403s, so fall back to the same query without it (last sign-in
   // dates are a nice-to-have; the rest of the assessment must still run).
   let signInBlocked = false;
   let rawUsers: Record<string, unknown>[];
   try {
-    rawUsers = await getAll<Record<string, unknown>>(`/users?$select=${USER_SELECT},signInActivity&$top=999`);
+    rawUsers = await getAll<Record<string, unknown>>(`/users?$select=${USER_SELECT},signInActivity${USER_EXPAND}&$top=999`);
   } catch (e) {
     if (e instanceof GraphError && (e.status === 403 || e.status === 401)) {
       signInBlocked = true;
       log('→ signInActivity needs AuditLog.Read.All (not consented) — retrying without last sign-in dates', 'warn');
-      rawUsers = await getAll<Record<string, unknown>>(`/users?$select=${USER_SELECT}&$top=999`);
+      rawUsers = await getAll<Record<string, unknown>>(`/users?$select=${USER_SELECT}${USER_EXPAND}&$top=999`);
     } else {
       throw e;
     }
   }
   log(`→ ${rawUsers.length} user object(s) retrieved`, 'ok');
+  const smtpAliases = (px: unknown): string => ((px as string[]) ?? []).filter((p) => /^smtp:/i.test(p)).map((p) => p.replace(/^smtp:/i, '')).join(', ');
   const users: DiscoveryUser[] = rawUsers.map((u) => ({
     displayName: String(u.displayName ?? ''),
     userPrincipalName: String(u.userPrincipalName ?? ''),
@@ -392,6 +408,13 @@ export async function runDiscovery(log: Logger = noop): Promise<DiscoveryResult>
     createdDateTime: String(u.createdDateTime ?? '').slice(0, 10),
     lastSignIn: String((u.signInActivity as { lastSignInDateTime?: string })?.lastSignInDateTime ?? '').slice(0, 10),
     appPlatforms: '', userCategory: '', workerType: '', lastOfficeActivity: '', deviceCount: 0, deviceTypes: '',
+    aliases: smtpAliases(u.proxyAddresses),
+    hybrid: u.onPremisesSyncEnabled === true ? 'Synced (AD)' : 'Cloud only',
+    company: String(u.companyName ?? ''),
+    office: String(u.officeLocation ?? ''),
+    mobile: String(u.mobilePhone ?? ''),
+    manager: String((u.manager as { userPrincipalName?: string })?.userPrincipalName ?? ''),
+    mailboxType: '', mailboxGB: 0,
   }));
   const guests = users.filter((u) => u.userType === 'Guest').length;
   const disabled = users.filter((u) => !u.accountEnabled).length;
@@ -564,6 +587,19 @@ export async function runDiscovery(log: Logger = noop): Promise<DiscoveryResult>
 
   const usage = await runUsage(log);
 
+  // Shared-mailbox heuristic: a user with a mailbox but no assigned licence is
+  // most likely a shared mailbox (migrate as shared, not as a licensed user).
+  if (usage.mailboxUpns.length) {
+    const mbxSet = new Set(usage.mailboxUpns);
+    for (const u of users) {
+      const upn = u.userPrincipalName.toLowerCase();
+      const has = mbxSet.has(upn) || (u.mail && mbxSet.has(u.mail.toLowerCase()));
+      u.mailboxType = has ? (u.licenses ? 'User' : 'Shared (likely)') : 'No mailbox';
+      u.mailboxGB = usage.mailboxSizes[upn] ?? (u.mail ? usage.mailboxSizes[u.mail.toLowerCase()] : 0) ?? 0;
+    }
+    log(`→ ${users.filter((u) => u.mailboxType === 'Shared (likely)').length} likely shared mailbox(es)`, 'info');
+  }
+
   // ---- Extended workloads (each resilient: 403/404 → validation item) ----
   const validations: ValidationItem[] = [];
   if (signInBlocked) validations.push({ workload: 'Users (sign-in activity)', object: 'signInActivity', status: 403, note: 'Last sign-in dates require AuditLog.Read.All consent; all other user attributes were collected.' });
@@ -608,6 +644,13 @@ export async function runDiscovery(log: Logger = noop): Promise<DiscoveryResult>
     () => getAll<Record<string, unknown>>('/servicePrincipals?$select=appId,displayName,servicePrincipalType,accountEnabled&$top=999'),
     (n) => `${n} service principal(s)`);
   const servicePrincipals = spRaw.map((s) => ({ appId: String(s.appId ?? ''), displayName: String(s.displayName ?? ''), type: String(s.servicePrincipalType ?? ''), enabled: s.accountEnabled !== false }));
+
+  const rolesRaw = await collect<Record<string, unknown>>('Admin roles', 'Get-MgDirectoryRole -ExpandProperty members',
+    () => getAll<Record<string, unknown>>('/directoryRoles?$expand=members($select=userPrincipalName,displayName)'),
+    (n) => `${n} active admin role(s)`);
+  const adminRoles = rolesRaw
+    .map((r) => ({ role: String(r.displayName ?? ''), members: ((r.members as { userPrincipalName?: string }[]) ?? []).map((m) => String(m.userPrincipalName ?? '')).filter(Boolean) }))
+    .filter((r) => r.members.length > 0);
 
   const intuneConfigs = await collect('Intune (config)', 'Get-MgDeviceManagementDeviceConfiguration',
     () => getAll<unknown>('/deviceManagement/deviceConfigurations'), (n) => `${n} device configuration(s)`);
@@ -752,6 +795,7 @@ export async function runDiscovery(log: Logger = noop): Promise<DiscoveryResult>
     caPolicies, appRegistrations, servicePrincipals,
     intune: { configs: intuneConfigs.length, compliance: intuneCompliance.length, devices: devices.total },
     compliancePolicies,
+    adminRoles,
     oneDrive: { readable: oneDriveSample.readable || usage.oneDriveCount, notReadable: oneDriveSample.notReadable },
     validations, workloads,
     fetchedAt: new Date().toISOString(),
