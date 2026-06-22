@@ -22,7 +22,7 @@ export default function TenantPortfolio() {
   const reconnect = (t: TenantIndexEntry) => {
     const r = loadTenantResult(t.tenantId);
     if (r) save('discovery-result', r);
-    nav('/discovery');
+    nav('/tenants/connect');
   };
 
   const remove = (t: TenantIndexEntry) => {
@@ -67,7 +67,7 @@ export default function TenantPortfolio() {
 
       <div className="mb-4 flex items-center justify-between">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Source tenants</h2>
-        <Button onClick={() => nav('/discovery')}><Plus size={15} /> Connect a source tenant</Button>
+        <Button onClick={() => nav('/tenants/connect')}><Plus size={15} /> Connect a source tenant</Button>
       </div>
 
       {tenants.length === 0 ? (
@@ -75,7 +75,7 @@ export default function TenantPortfolio() {
           <Layers size={40} className="mx-auto mb-3 text-slate-300 dark:text-slate-600" />
           <p className="mb-1 font-semibold text-slate-700 dark:text-slate-200">No source tenants yet</p>
           <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">Connect a customer's source tenant with a code — discovery runs here and the tenant stays in this list until you remove it.</p>
-          <Button onClick={() => nav('/discovery')}><Plus size={15} /> Connect a source tenant</Button>
+          <Button onClick={() => nav('/tenants/connect')}><Plus size={15} /> Connect a source tenant</Button>
         </Card>
       ) : (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">

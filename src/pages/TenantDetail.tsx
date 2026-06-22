@@ -197,7 +197,7 @@ export default function TenantDetail() {
             </div>
           </div>
           <div className="ml-auto flex items-center gap-2">
-            <button onClick={() => { save('discovery-result', r); nav('/discovery'); }} className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"><RefreshCw size={15} /> Re-run</button>
+            <button onClick={() => { nav('/tenants/connect'); }} className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"><RefreshCw size={15} /> Re-run</button>
             <button onClick={() => exportDiscoveryWorkbook(r, analysis)} className="inline-flex items-center gap-1.5 rounded-md bg-blue-700 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-800"><FileSpreadsheet size={15} /> Export Excel</button>
           </div>
         </div>
