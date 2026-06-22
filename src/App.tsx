@@ -10,6 +10,7 @@ import GpoAdvisor from './pages/GpoAdvisor';
 import GpoBuilder from './pages/GpoBuilder';
 import Discovery from './pages/Discovery';
 import TenantPortfolio from './pages/TenantPortfolio';
+import TenantDetail from './pages/TenantDetail';
 import Agent from './pages/Agent';
 import CrossTenant from './pages/CrossTenant';
 import Hybrid from './pages/Hybrid';
@@ -52,6 +53,7 @@ export default function App() {
           <Route path="/gpo-builder" element={<GpoBuilder />} />
           <Route path="/discovery" element={<Discovery />} />
           <Route path="/tenants" element={<TenantPortfolio />} />
+          <Route path="/tenants/:tenantId" element={<TenantDetail />} />
           <Route path="/agent" element={<Agent />} />
           <Route path="/edge-cases" element={<EdgeCasesAssistant />} />
           <Route path="/cross-tenant" element={<CrossTenant />} />

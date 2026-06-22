@@ -18,7 +18,8 @@ export default function TenantPortfolio() {
     mobile: a.mobile + (t.mobileUsers || 0),
   }), { users: 0, devices: 0, dataGB: 0, desktop: 0, mobile: 0 }), [tenants]);
 
-  const open = (t: TenantIndexEntry) => {
+  const open = (t: TenantIndexEntry) => nav(`/tenants/${t.tenantId}`);
+  const reconnect = (t: TenantIndexEntry) => {
     const r = loadTenantResult(t.tenantId);
     if (r) save('discovery-result', r);
     nav('/discovery');
@@ -124,7 +125,7 @@ export default function TenantPortfolio() {
 
               <div className="mt-auto flex items-center gap-2">
                 <Button className="flex-1" onClick={() => open(t)}>Open <ArrowRight size={15} /></Button>
-                <button onClick={() => open(t)} title="Re-run / re-connect" className="rounded-lg border border-slate-200 dark:border-slate-600 p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700"><RefreshCw size={15} /></button>
+                <button onClick={() => reconnect(t)} title="Re-run / re-connect" className="rounded-lg border border-slate-200 dark:border-slate-600 p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700"><RefreshCw size={15} /></button>
                 <button onClick={() => remove(t)} title="Remove & wipe" className="rounded-lg border border-rose-200 dark:border-rose-800 p-2 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/30"><Trash2 size={15} /></button>
               </div>
             </Card>
