@@ -1,0 +1,27 @@
+WorkPilot — local sign-in helper (sign in from YOUR location, not Denmark)
+=========================================================================
+
+Why: the sign-in code must be requested by a computer (browsers can't). When the
+portal does it, the request comes from the web server in Denmark. This tiny
+helper requests the code from THIS PC instead, so Microsoft shows YOUR location
+(Belgium) and your Conditional Access lets it through.
+
+No install. No app registration. Read-only. It uses PowerShell, which is already
+part of Windows.
+
+HOW TO USE
+----------
+1. Double-click  START-local-signin.bat
+   - If Windows shows a blue "Windows protected your PC" box: click
+     "More info" -> "Run anyway" (it's just a script you can read).
+   - A window opens that says "WorkPilot local sign-in helper is RUNNING".
+     LEAVE IT OPEN.
+
+2. Go to the portal -> Add a source tenant -> "Other ways to sign in"
+   -> "Or sign in with a code" -> Get a code.
+   The code is now requested from THIS PC (your location). Enter the code at
+   microsoft.com/devicelogin, approve, and the analysis runs.
+
+3. When you're done, just close the helper window.
+
+That's it. No Denmark, nothing registered, everything local.

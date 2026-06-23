@@ -8,6 +8,7 @@
  */
 
 const BROKER = new URL('api/auth.php', document.baseURI).toString();
+const LOCAL_HELPER = 'http://localhost:8799/devicecode'; // optional local helper = sign-in from YOUR PC (Belgium)
 const AUTHORITY = 'https://login.microsoftonline.com/organizations';
 const GRAPH_CLI_CLIENT = '14d82eec-204b-4c2f-b7e8-296a70dab67e';
 
@@ -34,8 +35,21 @@ export async function brokerAvailable(): Promise<boolean> {
   }
 }
 
-/** Step 1: ask the broker (server-side) for a device code. This call carries no identity. */
+/** Step 1: get a device code — PREFER the local helper (your PC = your location), else the server broker. */
 export async function requestDeviceCode(): Promise<DeviceCode> {
+  // 1) Local helper running on this PC? Then the code is requested from YOUR location (e.g. Belgium).
+  try {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 1500);
+    const lr = await fetch(LOCAL_HELPER, { method: 'POST', signal: ctl.signal });
+    clearTimeout(t);
+    if (lr.ok) {
+      const ld = await lr.json().catch(() => ({}));
+      if (ld.device_code) { pollViaBroker = false; return ld; }
+    }
+  } catch { /* helper not running — fall back to the server broker */ }
+
+  // 2) Fall back to the one.com server broker (requested server-side; shows the server's location).
   const res = await fetch(`${BROKER}?action=start`, { method: 'POST' });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data.device_code) {

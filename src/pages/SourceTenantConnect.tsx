@@ -206,7 +206,7 @@ export default function SourceTenantConnect() {
             </button>
             {showCode && (
               <div className="mt-3">
-                <p className="mb-3 text-xs text-slate-500">No app registration, but the approval screen shows the <strong>server's</strong> location (Denmark), because the code is requested server-side.</p>
+                <p className="mb-3 text-xs text-slate-500">No app registration. Run the small <strong>local sign-in helper</strong> on your PC first (double-click START-local-signin.bat) and the sign-in comes from <strong>your location (Belgium)</strong>. Without it running, it uses the server (Denmark).</p>
                 {phase === 'awaiting' && code ? (
                   <ol className="space-y-3 text-sm">
                     <li><div className="mb-1 font-medium text-slate-700 dark:text-slate-200">1 · Open</div><a href={code.verification_uri} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-blue-700 hover:underline dark:text-blue-400">{code.verification_uri || 'microsoft.com/devicelogin'} <ExternalLink size={12} /></a></li>
