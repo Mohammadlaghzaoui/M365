@@ -1,14 +1,18 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Layers, Building2, Users2, HardDrive, Smartphone, Monitor, Trash2, ArrowRight, RefreshCw, Plus, ShieldCheck, Server } from 'lucide-react';
 import { Badge, Button, Card, PageHeader, ProgressBar } from '../components/ui';
 import { tenantIndex, removeTenantResult, loadTenantResult, TenantIndexEntry } from '../services/tenantStore';
 import { save } from '../store/useLocalStorage';
+import { pullCloud, pushCloud } from '../services/cloudStore';
 
 /** Multi-tenant assessment dashboard — every tenant you connect stays here until you remove it. */
 export default function TenantPortfolio() {
   const nav = useNavigate();
   const [tenants, setTenants] = useState<TenantIndexEntry[]>(() => tenantIndex());
+
+  // Refresh from the server on open so changes/deletes from other browsers show up.
+  useEffect(() => { pullCloud().then(() => setTenants(tenantIndex())).catch(() => {}); }, []);
 
   const totals = useMemo(() => tenants.reduce((a, t) => ({
     users: a.users + (t.users || 0),
@@ -26,9 +30,10 @@ export default function TenantPortfolio() {
   };
 
   const remove = (t: TenantIndexEntry) => {
-    if (!window.confirm(`Remove "${t.displayName}" and wipe its stored assessment from this browser?`)) return;
+    if (!window.confirm(`Remove "${t.displayName}"? This deletes its assessment everywhere you're signed in.`)) return;
     removeTenantResult(t.tenantId);
     setTenants(tenantIndex());
+    pushCloud(true).catch(() => {}); // propagate the deletion to your other browsers now
   };
 
   const fmtData = (gb: number) => (gb >= 1024 ? `${(gb / 1024).toFixed(1)} TB` : `${gb} GB`);

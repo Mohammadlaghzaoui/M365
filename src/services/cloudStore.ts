@@ -38,21 +38,24 @@ function syncableKeys(): string[] {
   return out;
 }
 
-/** Pull the server blob and hydrate localStorage. Returns number of keys loaded. */
+/** Pull the server blob and make local match it. Returns number of keys loaded. */
 export async function pullCloud(): Promise<number> {
   if (!currentUser) return 0;
   const res = await fetch(STORE_URL, { method: 'GET', headers: headers() });
   if (!res.ok) throw new Error(`Cloud sync GET ${res.status}`);
   const blob = (await res.json()) as Record<string, string>;
-  const isEmpty = (s: string) => /^(\[\]|\{\}|null|""|)$/.test((s || '').trim());
+  const serverEntries = Object.entries(blob).filter(([k, v]) => !EXCLUDE.has(k) && typeof v === 'string');
+
+  // Completely empty server = first sync or a wiped store: don't delete anything,
+  // let this (data-holding) browser push and re-seed the server.
+  if (serverEntries.length === 0) { hydrated = true; return 0; }
+
+  // Server has data → it is authoritative. Apply server keys AND remove local
+  // synced keys the server no longer has, so deletions propagate to every browser.
+  const serverKeys = new Set(serverEntries.map(([k]) => k));
   let n = 0;
-  for (const [k, raw] of Object.entries(blob)) {
-    if (EXCLUDE.has(k) || typeof raw !== 'string') continue;
-    const local = localStorage.getItem(PREFIX + k);
-    if (isEmpty(raw) && local && !isEmpty(local)) continue; // keep real local data over an empty server value
-    localStorage.setItem(PREFIX + k, raw);
-    n++;
-  }
+  for (const [k, raw] of serverEntries) { localStorage.setItem(PREFIX + k, raw); n++; }
+  for (const k of syncableKeys()) { if (!serverKeys.has(k)) localStorage.removeItem(PREFIX + k); }
   hydrated = true;
   return n;
 }

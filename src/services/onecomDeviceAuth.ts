@@ -1,14 +1,15 @@
 /**
- * Device-code sign-in via a tiny PHP broker hosted on one.com.
- *
- * This is the "enter a code, approve in Microsoft" flow (like Codex), with
- * NOTHING installed locally and NO Render/agent. The browser can't call
- * Microsoft's /devicecode endpoint (no CORS), so `public/api/auth.php` — which
- * lives on your own one.com web hosting — does that one server-side step. The
- * read-only Microsoft Graph collection then runs in the browser with the token.
+ * Device-code sign-in. The one.com PHP broker is used ONLY to request the device
+ * code (Microsoft blocks /devicecode in browsers via CORS). The actual token
+ * sign-in is polled DIRECTLY from the browser (Microsoft's /token endpoint allows
+ * CORS), so the sign-in is attributed to the engineer's real location — not the
+ * one.com server (which is in Denmark). If the direct poll is blocked, it falls
+ * back to the broker. Read-only Microsoft Graph runs in the browser with the token.
  */
 
 const BROKER = new URL('api/auth.php', document.baseURI).toString();
+const AUTHORITY = 'https://login.microsoftonline.com/organizations';
+const GRAPH_CLI_CLIENT = '14d82eec-204b-4c2f-b7e8-296a70dab67e';
 
 export interface DeviceCode {
   device_code: string;
@@ -21,6 +22,7 @@ export interface DeviceCode {
 }
 
 let accessToken = '';
+let pollViaBroker = false; // flips to true only if the direct browser poll is blocked
 
 /** Is the PHP broker reachable on this host? (cheap probe) */
 export async function brokerAvailable(): Promise<boolean> {
@@ -32,7 +34,7 @@ export async function brokerAvailable(): Promise<boolean> {
   }
 }
 
-/** Step 1: ask the broker (server-side) for a device code. */
+/** Step 1: ask the broker (server-side) for a device code. This call carries no identity. */
 export async function requestDeviceCode(): Promise<DeviceCode> {
   const res = await fetch(`${BROKER}?action=start`, { method: 'POST' });
   const data = await res.json().catch(() => ({}));
@@ -42,10 +44,35 @@ export async function requestDeviceCode(): Promise<DeviceCode> {
     }
     throw new Error(data.error_description || data.error || `Could not start sign-in (${res.status}).`);
   }
+  pollViaBroker = false;
   return data;
 }
 
-/** Step 2: poll the broker until the admin completes sign-in. */
+/** One poll attempt — prefers a DIRECT browser call so the sign-in shows the engineer's location. */
+async function pollOnce(deviceCode: string): Promise<Record<string, string>> {
+  const body = new URLSearchParams({
+    grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+    client_id: GRAPH_CLI_CLIENT,
+    device_code: deviceCode,
+  }).toString();
+  if (!pollViaBroker) {
+    try {
+      const res = await fetch(`${AUTHORITY}/oauth2/v2.0/token`, {
+        method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body,
+      });
+      return await res.json().catch(() => ({}));
+    } catch {
+      pollViaBroker = true; // CORS/network blocked the direct call — fall back to the server broker
+    }
+  }
+  const res = await fetch(`${BROKER}?action=poll`, {
+    method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ device_code: deviceCode }).toString(),
+  });
+  return await res.json().catch(() => ({}));
+}
+
+/** Step 2: poll until the admin completes sign-in (direct from the browser when possible). */
 export async function pollForToken(dc: DeviceCode, onTick?: () => void): Promise<{ accessToken: string; tenantId: string }> {
   const deadline = Date.now() + dc.expires_in * 1000;
   let interval = (dc.interval || 5) * 1000;
@@ -53,13 +80,8 @@ export async function pollForToken(dc: DeviceCode, onTick?: () => void): Promise
     if (Date.now() > deadline) throw new Error('The sign-in code expired. Please start again.');
     await new Promise((r) => setTimeout(r, interval));
     onTick?.();
-    const res = await fetch(`${BROKER}?action=poll`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ device_code: dc.device_code }).toString(),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (res.ok && data.access_token) {
+    const data = await pollOnce(dc.device_code);
+    if (data.access_token) {
       accessToken = data.access_token;
       const tenantId = decodeTid(data.id_token) || decodeTid(data.access_token) || '';
       return { accessToken: data.access_token, tenantId };
