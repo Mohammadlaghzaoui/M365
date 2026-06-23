@@ -32,20 +32,17 @@ import Login from './pages/Login';
 import { getSession, Session } from './services/auth';
 import { useEffect } from 'react';
 import { setSaveHook } from './store/useLocalStorage';
-import { pullCloud, schedulePush, cloudSyncEnabled, getCloudSync, saveCloudSync } from './services/cloudStore';
+import { pullCloud, schedulePush, setSyncUser } from './services/cloudStore';
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(getSession());
   const [hydrating, setHydrating] = useState(false);
 
-  // Cross-device sync: register the save hook, and pull the server blob on login.
+  // Cross-device sync: automatic, linked to the signed-in user — no setup.
   useEffect(() => { setSaveHook(schedulePush); return () => setSaveHook(null); }, []);
   useEffect(() => {
     if (!session) return;
-    // Keep the sync namespace in step with the signed-in user.
-    const c = getCloudSync();
-    if (c.enabled && c.user !== session.email) saveCloudSync({ ...c, user: session.email });
-    if (!cloudSyncEnabled()) return;
+    setSyncUser(session.email);
     setHydrating(true);
     pullCloud().catch(() => {}).finally(() => setHydrating(false));
   }, [session]);

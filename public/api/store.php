@@ -7,12 +7,11 @@
  * store (on your own one.com hosting) saves the data server-side so any browser
  * you sign in from sees the same source tenants and assessments.
  *
- * Upload to:  https://YOURDOMAIN/api/store.php
- * Set a long random key below (or via the WORKPILOT_STORE_KEY env var) and put
- * the SAME key in the portal: Settings -> Integrations -> Cloud sync.
+ * Upload to:  https://YOURDOMAIN/api/store.php   (that's it — no key, no setup)
  *
- * Data is namespaced per signed-in user (e-mail) and kept in api/_store/, which
- * is blocked from direct web access. Read-only assessment data only — no tokens.
+ * Data is linked to the signed-in user (e-mail), kept in api/_store/ which is
+ * blocked from direct web access, and only the portal's own domains may call it
+ * (CORS allow-list above). Read-only assessment data only — never any token.
  */
 
 header('Content-Type: application/json; charset=utf-8');
@@ -24,17 +23,20 @@ header('Access-Control-Allow-Headers: content-type, x-store-key, x-user');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') { http_response_code(204); exit; }
 
-// ===== Shared secret — CHANGE THIS and paste the same value in the portal =====
-$SHARED_KEY = getenv('WORKPILOT_STORE_KEY') ?: 'change-me-to-a-long-random-string';
-
-$key = $_SERVER['HTTP_X_STORE_KEY'] ?? '';
-if (!is_string($key) || !hash_equals($SHARED_KEY, $key)) {
-  http_response_code(401);
-  echo json_encode(['error' => 'unauthorized']);
-  exit;
+// No key needed — data is linked to the signed-in user (e-mail) and the browser
+// origin is restricted above. (Optional: set WORKPILOT_STORE_KEY to also require
+// a shared key, but that is NOT required and the portal does not send one.)
+$SHARED_KEY = getenv('WORKPILOT_STORE_KEY') ?: '';
+if ($SHARED_KEY !== '') {
+  $key = $_SERVER['HTTP_X_STORE_KEY'] ?? '';
+  if (!is_string($key) || !hash_equals($SHARED_KEY, $key)) {
+    http_response_code(401);
+    echo json_encode(['error' => 'unauthorized']);
+    exit;
+  }
 }
 
-$user = preg_replace('/[^a-z0-9@._\-]/i', '', $_SERVER['HTTP_X_USER'] ?? 'shared');
+$user = strtolower(preg_replace('/[^a-z0-9@._\-]/i', '', $_SERVER['HTTP_X_USER'] ?? 'shared'));
 if ($user === '') $user = 'shared';
 
 $dir = __DIR__ . '/_store';
