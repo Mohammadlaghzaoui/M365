@@ -30,12 +30,39 @@ import Settings from './pages/Settings';
 import Provisioning from './pages/Provisioning';
 import Login from './pages/Login';
 import { getSession, Session } from './services/auth';
+import { useEffect } from 'react';
+import { setSaveHook } from './store/useLocalStorage';
+import { pullCloud, schedulePush, cloudSyncEnabled, getCloudSync, saveCloudSync } from './services/cloudStore';
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(getSession());
+  const [hydrating, setHydrating] = useState(false);
+
+  // Cross-device sync: register the save hook, and pull the server blob on login.
+  useEffect(() => { setSaveHook(schedulePush); return () => setSaveHook(null); }, []);
+  useEffect(() => {
+    if (!session) return;
+    // Keep the sync namespace in step with the signed-in user.
+    const c = getCloudSync();
+    if (c.enabled && c.user !== session.email) saveCloudSync({ ...c, user: session.email });
+    if (!cloudSyncEnabled()) return;
+    setHydrating(true);
+    pullCloud().catch(() => {}).finally(() => setHydrating(false));
+  }, [session]);
 
   if (!session) {
     return <Login onLogin={setSession} />;
+  }
+
+  if (hydrating) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-100 text-slate-500 dark:bg-slate-950">
+        <div className="text-center">
+          <div className="mx-auto mb-3 h-8 w-8 animate-spin rounded-full border-2 border-slate-300 border-t-blue-600" />
+          Loading your assessments…
+        </div>
+      </div>
+    );
   }
 
   return (

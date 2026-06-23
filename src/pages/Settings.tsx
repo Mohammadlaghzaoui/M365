@@ -24,7 +24,50 @@ import { getAuditLog, agentConfigured, AuditEntry } from '../services/agent';
 import { getDiscoveryAuth, saveDiscoveryAuth } from '../services/discoveryAuth';
 import { load, save } from '../store/useLocalStorage';
 import { NAV } from '../components/Layout';
-import { ScrollText } from 'lucide-react';
+import { ScrollText, Cloud } from 'lucide-react';
+import { getCloudSync, saveCloudSync, testCloudSync, pushCloud, pullCloud, CloudSyncConfig } from '../services/cloudStore';
+
+function CloudSyncCard() {
+  const [cfg, setCfg] = useState<CloudSyncConfig>(() => ({ ...getCloudSync(), user: getCloudSync().user || (getSession()?.email ?? '') }));
+  const [state, setState] = useState<'idle' | 'testing' | 'ok' | 'err'>('idle');
+  const [msg, setMsg] = useState('');
+
+  const set = (patch: Partial<CloudSyncConfig>) => { const next = { ...cfg, ...patch }; setCfg(next); saveCloudSync(next); };
+  const test = async () => {
+    setState('testing'); setMsg('');
+    const r = await testCloudSync(cfg);
+    setState(r.ok ? 'ok' : 'err'); setMsg(r.detail);
+    if (r.ok) { try { await pushCloud(); await pullCloud(); } catch { /* ignore */ } }
+  };
+
+  return (
+    <Card className="space-y-3 border-blue-200 p-5 dark:border-blue-800">
+      <Section title="Cloud sync (remember across browsers & devices)">
+        <p className="-mt-1 mb-2 text-sm text-slate-500 dark:text-slate-400">
+          Without this, the portal stores everything only in this browser — sign in elsewhere and it looks empty. Turn this on to save your source tenants and assessments on your one.com server, so every browser/device you sign in from sees the same data.
+        </p>
+        <label className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
+          <input type="checkbox" checked={cfg.enabled} onChange={(e) => set({ enabled: e.target.checked })} className="h-4 w-4 rounded border-slate-300 text-blue-600" />
+          Enable cloud sync
+        </label>
+        {cfg.enabled && (
+          <div className="space-y-3 pt-1">
+            <Field label="Sync key (must match WORKPILOT_STORE_KEY in api/store.php)" type="password" value={cfg.key} onChange={(v) => set({ key: v })} placeholder="a long random string" />
+            <Field label="Namespace (your e-mail — keeps your data separate)" value={cfg.user} onChange={(v) => set({ user: v })} placeholder={getSession()?.email ?? 'you@company.com'} />
+            <div className="flex items-center gap-3">
+              <Button variant="ai" onClick={test} disabled={state === 'testing' || !cfg.key}>
+                {state === 'testing' ? <Loader2 size={15} className="animate-spin" /> : <Cloud size={15} />} Test &amp; sync now
+              </Button>
+              {state === 'ok' && <span className="flex items-center gap-1 text-sm text-emerald-600"><CheckCircle2 size={15} /> {msg}</span>}
+              {state === 'err' && <span className="flex items-center gap-1 text-sm text-rose-600"><XCircle size={15} /> {msg}</span>}
+            </div>
+            <p className="text-xs text-slate-400">Upload <code>public/api/store.php</code> to one.com, set a long random key inside it, and paste the same key here. Read-only assessment data only — never your login or any token.</p>
+          </div>
+        )}
+      </Section>
+    </Card>
+  );
+}
 
 type Tab = 'ai' | 'sso' | 'integrations' | 'branding' | 'modules' | 'account' | 'audit' | 'data';
 
@@ -298,6 +341,8 @@ function IntegrationsTab() {
           ))}
         </div>
       </Card>
+
+      <CloudSyncCard />
 
       {/* Migration Agent */}
       <Card className="p-5 space-y-3 border-violet-200 dark:border-violet-800">
