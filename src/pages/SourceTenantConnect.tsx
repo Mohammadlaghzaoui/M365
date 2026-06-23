@@ -124,13 +124,50 @@ export default function SourceTenantConnect() {
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-5">
         <div className="lg:col-span-2 space-y-5">
-          {/* Local agent: code from your own PC (your location) */}
-          <div className="rounded-lg border border-emerald-300 bg-white p-5 shadow-sm dark:border-emerald-800 dark:bg-slate-900">
+          {/* Browser sign-in — your location (Belgium), no Denmark, no install */}
+          <div className="rounded-lg border-2 border-blue-400 bg-white p-5 shadow-sm dark:border-blue-700 dark:bg-slate-900">
             <div className="mb-1 flex items-center gap-2">
-              <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">Connect with a code — local</h2>
-              <span className="rounded bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">Your PC's location</span>
+              <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">Sign in with Microsoft</h2>
+              <span className="rounded bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">Recommended · YOUR location</span>
             </div>
-            <p className="mb-4 text-sm text-slate-500">The agent runs on <strong>this PC</strong> and requests the code locally, so Microsoft shows <strong>your</strong> location — not the server (Denmark). Enter a code, approve, done.</p>
+            <p className="mb-4 text-sm text-slate-500">A normal Microsoft sign-in window opens in your browser — no code, no agent, nothing installed. The sign-in shows <strong>your own location</strong> (not Denmark). This is the original popup flow.</p>
+
+            {configured ? (
+              <button onClick={signInPopup} disabled={busy} className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-800 disabled:opacity-50">
+                {busy ? <Loader2 size={16} className="animate-spin" /> : <Building2 size={16} />} Sign in &amp; analyze
+              </button>
+            ) : (
+              <div className="space-y-3 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm dark:border-slate-700 dark:bg-slate-800/40">
+                <div className="flex items-center gap-1.5 font-medium text-slate-700 dark:text-slate-200"><KeyRound size={14} /> One-time setup (~2 min, once ever)</div>
+                <ol className="ml-4 list-decimal space-y-1.5 text-xs text-slate-600 dark:text-slate-300">
+                  <li>
+                    Create a free app registration in <strong>your</strong> tenant (multitenant):
+                    <a href="https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/CreateApplicationBlade/quickStartType~/null/isMSAApp~/false" target="_blank" rel="noreferrer" className="ml-1 inline-flex items-center gap-1 font-medium text-blue-700 hover:underline dark:text-blue-400">open Entra <ExternalLink size={11} /></a>
+                  </li>
+                  <li>Add a <strong>Single-page application</strong> redirect URI:
+                    <div className="mt-1 flex items-center gap-2"><code className="flex-1 break-all rounded bg-white px-2 py-1 text-[11px] dark:bg-slate-900">{redirectUri}</code><CopyBtn text={redirectUri} /></div>
+                  </li>
+                  <li>Paste the <strong>Application (client) ID</strong> here:</li>
+                </ol>
+                <div className="flex items-center gap-2">
+                  <input value={clientId} onChange={(e) => setClientId(e.target.value)} placeholder="00000000-0000-0000-0000-000000000000" className="flex-1 rounded border border-slate-300 bg-white px-2 py-1.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100" />
+                  <button onClick={saveClient} disabled={!clientId.trim()} className="rounded-md bg-blue-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-800 disabled:opacity-50">Save</button>
+                </div>
+                <p className="text-[11px] text-slate-400">No client secret. The customer admin consents to the read-only scopes the first time they sign in.</p>
+              </div>
+            )}
+            {configured && (
+              <button onClick={() => setConfigured(false)} className="mt-2 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300">Change app registration</button>
+            )}
+          </div>
+
+          {/* Local agent: code from your own PC */}
+          <div className="rounded-lg border border-slate-300 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+            <div className="mb-1 flex items-center gap-2">
+              <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Connect with a code — local agent</h2>
+              <span className="rounded bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500 dark:bg-slate-700/50 dark:text-slate-300">Your PC's location</span>
+            </div>
+            <p className="mb-3 text-xs text-slate-500">Prefer a code over the popup? Run the agent on this PC so the code is requested locally — Microsoft then shows your location, not Denmark.</p>
             {agentReady ? (
               agentSession && agentSession.phase === 'awaiting-auth' ? (
                 <ol className="space-y-3 text-sm">
@@ -139,53 +176,15 @@ export default function SourceTenantConnect() {
                   <li className="flex items-center gap-2 text-xs text-blue-600"><Loader2 size={13} className="animate-spin" /> Waiting for sign-in…</li>
                 </ol>
               ) : (
-                <button onClick={agentConnect} disabled={busy} className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:opacity-50">
-                  {busy ? <Loader2 size={16} className="animate-spin" /> : <Terminal size={16} />} Get a code from this PC
+                <button onClick={agentConnect} disabled={busy} className="inline-flex items-center gap-2 rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">
+                  {busy ? <Loader2 size={15} className="animate-spin" /> : <Terminal size={15} />} Get a code from this PC
                 </button>
               )
             ) : (
-              <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm dark:border-slate-700 dark:bg-slate-800/40">
-                <p className="mb-2 text-slate-600 dark:text-slate-300">Run the small WorkPilot agent on this PC once, then it signs in locally.</p>
-                <div className="flex flex-wrap gap-2">
-                  <Link to="/agent" className="rounded-md bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-800">Download &amp; run the agent</Link>
-                  <Link to="/settings" className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">Configure agent (Settings)</Link>
-                </div>
-                <p className="mt-2 text-[11px] text-slate-400">After it's running, point the portal at <code>http://localhost:8787</code> in Settings → Migration Agent.</p>
+              <div className="flex flex-wrap gap-2">
+                <Link to="/agent" className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">Download the agent</Link>
+                <Link to="/settings" className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">Configure (Settings)</Link>
               </div>
-            )}
-          </div>
-
-          {/* Browser sign-in */}
-          <div className="rounded-lg border border-blue-300 bg-white p-5 shadow-sm dark:border-blue-800 dark:bg-slate-900">
-            <div className="mb-1 flex items-center gap-2">
-              <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">Sign in with Microsoft</h2>
-              <span className="rounded bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">No install · your location</span>
-            </div>
-            <p className="mb-4 text-sm text-slate-500">A normal Microsoft sign-in window opens in your browser — no code, no agent, and the sign-in shows <strong>your</strong> location. Needs a one-time app registration.</p>
-
-            {configured ? (
-              <button onClick={signInPopup} disabled={busy} className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-800 disabled:opacity-50">
-                {busy ? <Loader2 size={16} className="animate-spin" /> : <Building2 size={16} />} Sign in &amp; analyze
-              </button>
-            ) : (
-              <div className="space-y-3 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm dark:border-slate-700 dark:bg-slate-800/40">
-                <div className="flex items-center gap-1.5 font-medium text-slate-700 dark:text-slate-200"><KeyRound size={14} /> One-time setup (2 min)</div>
-                <ol className="ml-4 list-decimal space-y-1.5 text-xs text-slate-600 dark:text-slate-300">
-                  <li>In <strong>your</strong> Entra admin center → App registrations → New registration → <em>Accounts in any organizational directory (multitenant)</em>.</li>
-                  <li>Add a <strong>Single-page application</strong> redirect URI:
-                    <div className="mt-1 flex items-center gap-2"><code className="flex-1 break-all rounded bg-white px-2 py-1 text-[11px] dark:bg-slate-900">{redirectUri}</code><CopyBtn text={redirectUri} /></div>
-                  </li>
-                  <li>Copy the <strong>Application (client) ID</strong> and paste it here:</li>
-                </ol>
-                <div className="flex items-center gap-2">
-                  <input value={clientId} onChange={(e) => setClientId(e.target.value)} placeholder="00000000-0000-0000-0000-000000000000" className="flex-1 rounded border border-slate-300 bg-white px-2 py-1.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100" />
-                  <button onClick={saveClient} disabled={!clientId.trim()} className="rounded-md bg-blue-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-800 disabled:opacity-50">Save</button>
-                </div>
-                <p className="text-[11px] text-slate-400">The customer admin consents to the read-only scopes the first time they sign in. No client secret needed.</p>
-              </div>
-            )}
-            {configured && (
-              <button onClick={() => setConfigured(false)} className="mt-2 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300">Change app registration</button>
             )}
           </div>
 
