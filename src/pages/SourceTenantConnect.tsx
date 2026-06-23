@@ -27,6 +27,7 @@ export default function SourceTenantConnect() {
   const [lines, setLines] = useState<Line[]>([]);
   const [error, setError] = useState('');
   const [showCode, setShowCode] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [clientId, setClientId] = useState(() => getDiscoveryAuth().clientId);
   const [configured, setConfigured] = useState(() => discoveryAuthConfigured());
   const [agentSession, setAgentSession] = useState<DeviceSession | null>(null);
@@ -57,8 +58,12 @@ export default function SourceTenantConnect() {
       if (done.phase === 'done' && done.result) { setPhase('collecting'); finish(done.result); }
       else { setError(done.error || 'The agent could not complete the sign-in.'); setPhase('error'); }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-      addLine(`ERROR: ${e instanceof Error ? e.message : e}`, 'err');
+      const msg = e instanceof Error ? e.message : String(e);
+      const friendly = /failed to fetch|networkerror|load failed|typeerror/i.test(msg)
+        ? 'The local agent is not running on this PC (or its URL in Settings is wrong). Start the agent first, or use "Sign in with Microsoft" above — that needs no agent.'
+        : msg;
+      setError(friendly);
+      addLine(`ERROR: ${friendly}`, 'err');
       setPhase('error');
     }
   };
@@ -161,6 +166,11 @@ export default function SourceTenantConnect() {
             )}
           </div>
 
+          {/* Other ways to sign in (advanced) */}
+          <button onClick={() => setShowAdvanced((s) => !s)} className="w-full rounded-lg border border-slate-300 bg-white px-4 py-3 text-left text-sm font-medium text-slate-600 shadow-sm hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800">
+            {showAdvanced ? '▾' : '▸'} Other ways to sign in (code / local agent)
+          </button>
+          {showAdvanced && <>
           {/* Local agent: code from your own PC */}
           <div className="rounded-lg border border-slate-300 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
             <div className="mb-1 flex items-center gap-2">
@@ -211,6 +221,7 @@ export default function SourceTenantConnect() {
               </div>
             )}
           </div>
+          </>}
 
           {error && <p className="rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-900/20 dark:text-rose-300">{error}</p>}
         </div>
