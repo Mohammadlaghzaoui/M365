@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { ArrowLeft, Building2, ShieldCheck, Loader2, Copy, Check, ExternalLink, Terminal, KeyRound } from 'lucide-react';
 import { runDiscovery, useDiscoveryToken, LogLevel, DISCOVERY_SCOPES } from '../services/graphDiscovery';
-import { requestDeviceCode, pollForToken, getOnecomToken, clearOnecomToken, DeviceCode } from '../services/onecomDeviceAuth';
+import { requestDeviceCode, pollForToken, getOnecomToken, clearOnecomToken, localHelperReachable, DeviceCode } from '../services/onecomDeviceAuth';
 import { connectTenant, getDiscoveryToken, discoveryAuthConfigured, getDiscoveryAuth, saveDiscoveryAuth } from '../services/discoveryAuth';
 import { cloudAgentConfigured, startDeviceDiscovery, trackDeviceDiscovery, DeviceSession } from '../services/cloudDiscovery';
 import { saveTenantResult } from '../services/tenantStore';
@@ -28,6 +28,8 @@ export default function SourceTenantConnect() {
   const [error, setError] = useState('');
   const [showCode, setShowCode] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [helper, setHelper] = useState<'unknown' | 'checking' | 'yes' | 'no'>('unknown');
+  const checkHelper = async () => { setHelper('checking'); setHelper((await localHelperReachable()) ? 'yes' : 'no'); };
   const [clientId, setClientId] = useState(() => getDiscoveryAuth().clientId);
   const [configured, setConfigured] = useState(() => discoveryAuthConfigured());
   const [agentSession, setAgentSession] = useState<DeviceSession | null>(null);
@@ -206,7 +208,13 @@ export default function SourceTenantConnect() {
             </button>
             {showCode && (
               <div className="mt-3">
-                <p className="mb-3 text-xs text-slate-500">No app registration. Run the small <strong>local sign-in helper</strong> on your PC first (double-click START-local-signin.bat) and the sign-in comes from <strong>your location (Belgium)</strong>. Without it running, it uses the server (Denmark).</p>
+                <p className="mb-2 text-xs text-slate-500">No app registration. Run the small <strong>local sign-in helper</strong> on your PC (double-click START-local-signin.bat) and the sign-in comes from <strong>your location (Belgium)</strong>. Without it, it uses the server (Denmark).</p>
+                <div className="mb-3 flex items-center gap-2 text-xs">
+                  <button onClick={checkHelper} className="rounded border border-slate-300 px-2 py-1 font-medium text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">Check local helper</button>
+                  {helper === 'checking' && <span className="text-slate-500"><Loader2 size={12} className="inline animate-spin" /> checking…</span>}
+                  {helper === 'yes' && <span className="font-medium text-emerald-600">✅ Detected — sign-in will come from your PC (Belgium)</span>}
+                  {helper === 'no' && <span className="font-medium text-rose-600">⚠️ Not reachable — start START-local-signin.bat, or your browser blocks localhost</span>}
+                </div>
                 {phase === 'awaiting' && code ? (
                   <ol className="space-y-3 text-sm">
                     <li><div className="mb-1 font-medium text-slate-700 dark:text-slate-200">1 · Open</div><a href={code.verification_uri} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-blue-700 hover:underline dark:text-blue-400">{code.verification_uri || 'microsoft.com/devicelogin'} <ExternalLink size={12} /></a></li>

@@ -25,6 +25,19 @@ export interface DeviceCode {
 let accessToken = '';
 let pollViaBroker = false; // flips to true only if the direct browser poll is blocked
 
+/** Probe whether the local sign-in helper is reachable from this browser. */
+export async function localHelperReachable(): Promise<boolean> {
+  try {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 1500);
+    const res = await fetch('http://localhost:8799/', { signal: ctl.signal });
+    clearTimeout(t);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 /** Is the PHP broker reachable on this host? (cheap probe) */
 export async function brokerAvailable(): Promise<boolean> {
   try {
