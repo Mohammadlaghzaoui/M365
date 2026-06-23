@@ -50,12 +50,15 @@ export async function pullCloud(): Promise<number> {
   // let this (data-holding) browser push and re-seed the server.
   if (serverEntries.length === 0) { hydrated = true; return 0; }
 
-  // Server has data → it is authoritative. Apply server keys AND remove local
-  // synced keys the server no longer has, so deletions propagate to every browser.
+  // Apply all server keys.
   const serverKeys = new Set(serverEntries.map(([k]) => k));
   let n = 0;
   for (const [k, raw] of serverEntries) { localStorage.setItem(PREFIX + k, raw); n++; }
-  for (const k of syncableKeys()) { if (!serverKeys.has(k)) localStorage.removeItem(PREFIX + k); }
+  // Propagate DELETIONS, but ONLY for per-tenant assessment data — never config /
+  // settings (e.g. the app-registration client ID), so sync can't wipe your setup.
+  for (const k of syncableKeys()) {
+    if (k.startsWith('discovery:') && !serverKeys.has(k)) localStorage.removeItem(PREFIX + k);
+  }
   hydrated = true;
   return n;
 }
