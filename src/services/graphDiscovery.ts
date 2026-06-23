@@ -36,6 +36,10 @@ export const DISCOVERY_SCOPES = [
   'AuditLog.Read.All',
   'DeviceManagementConfiguration.Read.All',
   'DeviceManagementManagedDevices.Read.All',
+  'DeviceManagementApps.Read.All',
+  'SecurityEvents.Read.All',
+  'CloudPC.Read.All',
+  'InformationProtectionPolicy.Read.All',
 ];
 
 const V1 = 'https://graph.microsoft.com/v1.0';
@@ -281,6 +285,12 @@ export interface DiscoveryResult {
   intune: { configs: number; compliance: number; devices: number };
   compliancePolicies: { name: string; platform: string }[];
   adminRoles: { role: string; members: string[] }[];
+  // Cross admin-center coverage (read-only Graph)
+  secureScore: { current: number; max: number; percent: number } | null;
+  cloudPCs: number;
+  appProtection: number;
+  namedLocations: number;
+  sensitivityLabels: number;
   oneDrive: { readable: number; notReadable: number };
   validations: ValidationItem[];
   workloads: WorkloadReadiness[];
@@ -724,9 +734,27 @@ export async function runDiscovery(log: Logger = noop): Promise<DiscoveryResult>
     () => getAll<Record<string, unknown>>('/deviceManagement/deviceCompliancePolicies'), (n) => `${n} compliance policy(ies)`);
   const compliancePolicies = intuneCompliance.map((p) => {
     const odataType = String(p['@odata.type'] ?? '');
-    const platform = /android/i.test(odataType) ? 'Android' : /ios/i.test(odataType) ? 'iOS/iPadOS' : /macOS/i.test(odataType) ? 'macOS' : /windows/i.test(odataType) ? 'Windows' : 'Other';
+    const platform = /android/i.test(odataType) ? 'Android' : /ios/i.test(odataType) ? 'iOS/iPadOS' : /macOS/i.test(odataType) ? 'macOS' : /windows/i.test(odataType) ? 'Windows' : 'Other' ;
     return { name: String(p.displayName ?? ''), platform };
   });
+
+  // ---- Cross admin-center read-only collectors (each resilient) ----
+  let secureScore: { current: number; max: number; percent: number } | null = null;
+  try {
+    log('Get-MgSecuritySecureScore -Top 1  (Security center)', 'cmd');
+    const ss = await get<{ value: { currentScore: number; maxScore: number }[] }>('/security/secureScores?$top=1');
+    const s = ss.value?.[0];
+    if (s) { secureScore = { current: Math.round(s.currentScore), max: Math.round(s.maxScore), percent: s.maxScore ? Math.round((s.currentScore / s.maxScore) * 100) : 0 }; log(`→ Secure Score ${secureScore.current}/${secureScore.max} (${secureScore.percent}%)`, 'ok'); }
+  } catch (e) { log(`→ Secure Score unavailable (${e instanceof GraphError ? e.status : 'err'})`, 'warn'); }
+
+  const cloudPCsRaw = await collect('Cloud PCs (Windows 365)', 'Get-MgDeviceManagementVirtualEndpointCloudPC',
+    () => getAll<unknown>('/deviceManagement/virtualEndpoint/cloudPCs'), (n) => `${n} Cloud PC(s)`);
+  const appProtRaw = await collect('Intune app protection', 'Get-MgDeviceAppMgtManagedAppPolicy',
+    () => getAll<unknown>('/deviceAppManagement/managedAppPolicies'), (n) => `${n} app protection policy(ies)`);
+  const namedLocRaw = await collect('Identity named locations', 'Get-MgIdentityConditionalAccessNamedLocation',
+    () => getAll<unknown>('/identity/conditionalAccess/namedLocations'), (n) => `${n} named location(s)`);
+  const labelsRaw = await collect('Purview sensitivity labels', 'Get-MgSecurityInformationProtectionSensitivityLabel',
+    () => getAll<unknown>('/security/informationProtection/sensitivityLabels'), (n) => `${n} sensitivity label(s)`);
 
   // ---- Per-object detail collectors via $batch (capped, 429-safe) ----
   const TEAM_CAP = 150, SITE_CAP = 150, OD_SAMPLE = 100;
@@ -862,6 +890,11 @@ export async function runDiscovery(log: Logger = noop): Promise<DiscoveryResult>
     intune: { configs: intuneConfigs.length, compliance: intuneCompliance.length, devices: devices.total },
     compliancePolicies,
     adminRoles,
+    secureScore,
+    cloudPCs: cloudPCsRaw.length,
+    appProtection: appProtRaw.length,
+    namedLocations: namedLocRaw.length,
+    sensitivityLabels: labelsRaw.length,
     oneDrive: { readable: oneDriveSample.readable || usage.oneDriveCount, notReadable: oneDriveSample.notReadable },
     validations, workloads,
     fetchedAt: new Date().toISOString(),

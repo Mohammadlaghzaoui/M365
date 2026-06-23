@@ -85,6 +85,7 @@ const SECTIONS = [
   { id: 'collab', label: 'Collaboration' },
   { id: 'security', label: 'Security' },
   { id: 'apps', label: 'Applications' },
+  { id: 'admincenters', label: 'Admin Centers' },
   { id: 'testmig', label: 'Test Migration' },
   { id: 'risks', label: 'Risks & Issues' },
   { id: 'evidence', label: 'Evidence' },
@@ -402,8 +403,34 @@ export default function TenantDetail() {
         ) : <EmptyNote what="enterprise apps" reason={reasonFor(/enterprise apps/i)} />}
       </Section>
 
-      {/* 7. Test Migration */}
-      <Section id="testmig" n={7} title="Test Migration (Pilot Batch)" desc={`A representative pilot to validate the ${r.org.displayName} → ${target} migration before full cutover. Preview only — no changes are made.`}>
+      {/* 7. Admin Centers coverage */}
+      <Section id="admincenters" n={7} title="Admin Centers — coverage" desc="What was collected from each Microsoft 365 admin center, read-only via Microsoft Graph, and what needs a separate API/PowerShell.">
+        {r.secureScore && (
+          <div className="mb-4 flex items-center gap-4 rounded-lg border border-slate-300 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/40">
+            <div className="text-sm font-medium text-slate-700 dark:text-slate-200">Microsoft Secure Score</div>
+            <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700"><span className={`block h-full rounded-full ${r.secureScore.percent >= 60 ? 'bg-emerald-600' : r.secureScore.percent >= 35 ? 'bg-amber-500' : 'bg-rose-500'}`} style={{ width: `${r.secureScore.percent}%` }} /></div>
+            <div className="text-sm font-bold tabular-nums text-slate-800 dark:text-slate-100">{r.secureScore.current}/{r.secureScore.max} · {r.secureScore.percent}%</div>
+          </div>
+        )}
+        <DataTable
+          columns={['Admin center', 'Collected via Microsoft Graph', 'Status', 'Notes / separate tool']}
+          rows={[
+            ['Identity (Entra ID)', `${r.users.length} users · ${r.groups.length} groups · ${(r.adminRoles ?? []).length} roles · ${r.caPolicies.length} CA · ${r.namedLocations ?? 0} named locations`, <Chip label="Collected" tone="green" />, 'Full identity inventory.'],
+            ['Security (Defender)', r.secureScore ? `Secure Score ${r.secureScore.percent}% · ${r.caPolicies.length} CA policies` : `${r.caPolicies.length} CA policies`, <Chip label={r.secureScore ? 'Collected' : 'Partial'} tone={r.secureScore ? 'green' : 'amber'} />, 'Alerts/incidents available via Defender API if needed.'],
+            ['Microsoft Purview', `${r.sensitivityLabels ?? 0} sensitivity labels`, <Chip label={(r.sensitivityLabels ?? 0) ? 'Partial' : 'Limited'} tone="amber" />, 'DLP & retention policies need Purview / Security & Compliance PowerShell.'],
+            ['Microsoft Intune', `${r.devices.total} devices · ${(r.compliancePolicies ?? []).length} compliance · ${r.intune?.configs ?? 0} configs · ${r.appProtection ?? 0} app protection · ${r.cloudPCs ?? 0} Cloud PCs`, <Chip label="Collected" tone="green" />, 'Endpoint inventory + naming plan in the Endpoints tab.'],
+            ['Azure', `${vmCount} VM/Cloud PC device(s) detected`, <Chip label="Separate tool" tone="slate" />, 'Azure subscriptions, VMs & networks need the Azure Resource Manager API (different token).'],
+            ['Exchange Online', `${r.usage.mailboxCount} mailboxes · ${r.usage.mailboxTotalGB.toFixed(0)} GB · aliases · shared mailboxes`, <Chip label="Partial" tone="amber" />, 'Permissions, rules, transport rules & connectors need Exchange Online PowerShell.'],
+            ['SharePoint', `${r.sharePointSites.length} sites · ${r.usage.spoTotalGB.toFixed(0)} GB · sharing exposure`, <Chip label="Collected" tone="green" />, 'See Collaboration tab.'],
+            ['Teams', `${r.teams} teams · channels · members/owners/guests`, <Chip label="Partial" tone="amber" />, 'Calling / meeting / messaging policies need Teams PowerShell.'],
+            ['Power Platform', 'Environments, flows & apps', <Chip label="Separate tool" tone="slate" />, 'Needs the Power Platform Admin API (different token).'],
+          ]}
+        />
+        <p className="mt-2 text-xs text-slate-400">Everything marked "Collected"/"Partial" is read-only Microsoft Graph. "Separate tool" items use a different API surface and can be added via the cloud agent (Azure ARM, Power Platform, Exchange Online PowerShell) when required.</p>
+      </Section>
+
+      {/* 8. Test Migration */}
+      <Section id="testmig" n={8} title="Test Migration (Pilot Batch)" desc={`A representative pilot to validate the ${r.org.displayName} → ${target} migration before full cutover. Preview only — no changes are made.`}>
         <div className="mb-4 flex flex-wrap items-end gap-5 rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/40">
           <label className="text-sm text-slate-600 dark:text-slate-300">
             <span className="mb-1 block font-medium">Target domain</span>
@@ -427,7 +454,7 @@ export default function TenantDetail() {
       </Section>
 
       {/* 8. Risks & Issues */}
-      <Section id="risks" n={8} title="Risks & Issues" desc="Migration risks, blockers and anything Graph could not fully read.">
+      <Section id="risks" n={9} title="Risks & Issues" desc="Migration risks, blockers and anything Graph could not fully read.">
         {analysis && (
           <ul className="mb-5 space-y-1.5">
             {analysis.findings.filter((f) => f.level !== 'info').map((f, i) => (
@@ -443,7 +470,7 @@ export default function TenantDetail() {
       </Section>
 
       {/* 9. Evidence */}
-      <Section id="evidence" n={9} title="Data Sources / Evidence" desc="Every figure is collected read-only from Microsoft Graph — this is the provenance for the analysis.">
+      <Section id="evidence" n={10} title="Data Sources / Evidence" desc="Every figure is collected read-only from Microsoft Graph — this is the provenance for the analysis.">
         <DataTable columns={['Data set', 'Microsoft Graph source', 'Status', 'Records']} rows={evidence} align={{ 3: 'right' }} />
       </Section>
     </div>

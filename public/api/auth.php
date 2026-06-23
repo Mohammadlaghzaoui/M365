@@ -43,6 +43,7 @@ $SCOPE  = implode(' ', [
   'User.Read.All', 'Group.Read.All', 'Directory.Read.All', 'Organization.Read.All',
   'Domain.Read.All', 'Reports.Read.All', 'Sites.Read.All', 'Application.Read.All',
   'Policy.Read.All', 'AuditLog.Read.All', 'DeviceManagementConfiguration.Read.All', 'DeviceManagementManagedDevices.Read.All',
+  'DeviceManagementApps.Read.All', 'SecurityEvents.Read.All', 'CloudPC.Read.All', 'InformationProtectionPolicy.Read.All',
   'offline_access', 'openid', 'profile',
 ]);
 

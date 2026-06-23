@@ -9,6 +9,7 @@ export const DISCOVERY_SCOPES = [
   'User.Read.All', 'Group.Read.All', 'Directory.Read.All', 'Organization.Read.All',
   'Domain.Read.All', 'Reports.Read.All', 'Sites.Read.All', 'Application.Read.All',
   'Policy.Read.All', 'AuditLog.Read.All', 'DeviceManagementConfiguration.Read.All', 'DeviceManagementManagedDevices.Read.All',
+  'DeviceManagementApps.Read.All', 'SecurityEvents.Read.All', 'CloudPC.Read.All', 'InformationProtectionPolicy.Read.All',
 ];
 
 const V1 = 'https://graph.microsoft.com/v1.0';
@@ -260,6 +261,12 @@ export async function runReadOnlyDiscovery(token, log = () => {}) {
 
   const intuneConfigs = await collect('Intune (config)', 'Get-MgDeviceManagementDeviceConfiguration', () => gall(token, '/deviceManagement/deviceConfigurations'), (n) => `${n} config(s)`);
   const intuneCompliance = await collect('Intune (compliance)', 'Get-MgDeviceManagementDeviceCompliancePolicy', () => gall(token, '/deviceManagement/deviceCompliancePolicies'), (n) => `${n} compliance policy(ies)`);
+  let secureScore = null;
+  try { const ss = await gget(token, '/security/secureScores?$top=1'); const x = ss.value?.[0]; if (x) secureScore = { current: Math.round(x.currentScore), max: Math.round(x.maxScore), percent: x.maxScore ? Math.round((x.currentScore / x.maxScore) * 100) : 0 }; } catch (e) { log(`Secure Score unavailable: ${e.message}`, 'warn'); }
+  const cloudPCsRaw = await collect('Cloud PCs', 'Get-MgVirtualEndpointCloudPC', () => gall(token, '/deviceManagement/virtualEndpoint/cloudPCs'), (n) => `${n} Cloud PC(s)`);
+  const appProtRaw = await collect('App protection', 'Get-MgManagedAppPolicy', () => gall(token, '/deviceAppManagement/managedAppPolicies'), (n) => `${n} app protection policy(ies)`);
+  const namedLocRaw = await collect('Named locations', 'Get-MgNamedLocation', () => gall(token, '/identity/conditionalAccess/namedLocations'), (n) => `${n} named location(s)`);
+  const labelsRaw = await collect('Sensitivity labels', 'Get-MgSensitivityLabel', () => gall(token, '/security/informationProtection/sensitivityLabels'), (n) => `${n} label(s)`);
 
   workloads.unshift({ workload: 'Identity', status: 'Exported', count: users.length, note: `${users.length} users, ${guests} guests` });
   workloads.push({ workload: 'Teams', status: teams > 0 ? 'Exported' : 'Needs validation', count: teams, note: `${teams} Teams` });
@@ -287,6 +294,7 @@ export async function runReadOnlyDiscovery(token, log = () => {}) {
     intune: { configs: intuneConfigs.length, compliance: intuneCompliance.length, devices: devices.total },
     compliancePolicies: intuneCompliance.map((p) => ({ name: p.displayName ?? '', platform: /android/i.test(String(p['@odata.type'] ?? '')) ? 'Android' : /ios/i.test(String(p['@odata.type'] ?? '')) ? 'iOS/iPadOS' : /macOS/i.test(String(p['@odata.type'] ?? '')) ? 'macOS' : /windows/i.test(String(p['@odata.type'] ?? '')) ? 'Windows' : 'Other' })),
     adminRoles: [],
+    secureScore, cloudPCs: cloudPCsRaw.length, appProtection: appProtRaw.length, namedLocations: namedLocRaw.length, sensitivityLabels: labelsRaw.length,
     oneDrive: { readable: usage.oneDriveCount, notReadable: 0 },
     validations, workloads,
     fetchedAt: new Date().toISOString(),
